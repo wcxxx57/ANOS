@@ -1,17 +1,19 @@
 /* 标准输出和报错机制 */
 
 #include "mod.h"
+#include <stdarg.h>
 
 static char digits[] = "0123456789abcdef";
+extern volatile int panicked;
 
 /* printf的自旋锁 */
-static spinlock_t print_lk;
+// static spinlock_t print_lk;
 
 /* 初始化uart + 初始化printf锁 */
 void print_init(void)
 {
     uart_init();
-    spinlock_init(&print_lk, "printf");
+    // spinlock_init(&print_lk, "printf");
 }
 
 /* %d %p */
@@ -59,9 +61,67 @@ static void printptr(uint64 x)
 */
 void printf(const char *fmt, ...)
 {
+    va_list ap; //ap用于遍历可变参数
+    const char *p;//p用于遍历格式字符串
+    char c;
+    char *s;
 
+    va_start(ap, fmt); // 使ap指向第一个可变参数的地址
+
+    // //加锁
+    // spinlock_acquire(&print_lk);
+
+    // //如果已经panic, 则不再输出
+    // if(panicked){
+    //     spinlock_release(&print_lk); 
+    //     va_end(ap);
+    //     return;
+    // }
+
+    //解析格式字符串 fmt，遇到 % 就从可变参数中取出对应值并打印
+    for(p = fmt;*p;p++){
+        //不是格式化字符, 直接输出
+        if(*p!='%'){
+            uart_putc_sync(*p);
+            continue;
+        }
+        p++;
+        switch(*p){
+            case 'd':
+                printint(va_arg(ap,int),10,1);
+                break;
+            case 'p':
+                printint(va_arg(ap,uint32),16,0);
+                break;
+            case 'x':
+                printptr(va_arg(ap,uint64));
+                break;
+            case 'c':
+                c=va_arg(ap,int); // char会被提升为int
+                uart_putc_sync(c);
+                break;
+            case 's':
+                s=va_arg(ap,char*);
+                if(s==0)
+                    s="(null)";
+                while(*s!='\0'){
+                    uart_putc_sync(*s);
+                    s++;
+                }
+                break;
+            default:
+                uart_putc_sync('%');
+                uart_putc_sync(*p);
+                break;
+        }
+    }
+
+    // //解锁
+    // spinlock_release(&print_lk);
+
+    //清理ap
+    va_end(ap);
 }
-
 
 
 /* 如果发生panic, UART的停止标志 */
@@ -79,5 +139,7 @@ void panic(const char *s)
 /* 如果不满足条件, 则调用panic */
 void assert(bool condition, const char *warning)
 {
-
+     if (!condition) {
+        panic(warning);
+    }
 }
