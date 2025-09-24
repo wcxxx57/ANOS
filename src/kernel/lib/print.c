@@ -4,16 +4,18 @@
 #include <stdarg.h>
 
 static char digits[] = "0123456789abcdef";
-extern volatile int panicked;
+
+/* 如果发生panic, UART的停止标志 */
+volatile int panicked = 0;
 
 /* printf的自旋锁 */
-// static spinlock_t print_lk;
+static spinlock_t print_lk;//全局锁
 
 /* 初始化uart + 初始化printf锁 */
 void print_init(void)
 {
     uart_init();
-    // spinlock_init(&print_lk, "printf");
+    spinlock_init(&print_lk, "printf");
 }
 
 /* %d %p */
@@ -68,15 +70,15 @@ void printf(const char *fmt, ...)
 
     va_start(ap, fmt); // 使ap指向第一个可变参数的地址
 
-    // //加锁
-    // spinlock_acquire(&print_lk);
+    //加锁
+    spinlock_acquire(&print_lk);
 
-    // //如果已经panic, 则不再输出
-    // if(panicked){
-    //     spinlock_release(&print_lk); 
-    //     va_end(ap);
-    //     return;
-    // }
+    //如果已经panic, 则不再输出
+    if(panicked){
+        spinlock_release(&print_lk); 
+        va_end(ap);
+        return;
+    }
 
     //解析格式字符串 fmt，遇到 % 就从可变参数中取出对应值并打印
     for(p = fmt;*p;p++){
@@ -116,24 +118,29 @@ void printf(const char *fmt, ...)
         }
     }
 
-    // //解锁
-    // spinlock_release(&print_lk);
+    //解锁
+    spinlock_release(&print_lk);
 
     //清理ap
     va_end(ap);
 }
 
 
-/* 如果发生panic, UART的停止标志 */
-volatile int panicked = 0;
+
 
 /* 报错并终止输出 */
 void panic(const char *s)
 {
-    printf("panic! %s\n", s);
-    panicked = 1;
-    while (1)
-        ;
+    push_off(); //关中断
+
+    if(!panicked){ //避免不同核重复调用
+        panicked = 1;
+        printf("panic! %s\n", s?s:"<null>"); //报错
+    }
+
+    while (1){
+        asm volatile("wfi"); //安全停机
+    }
 }
 
 /* 如果不满足条件, 则调用panic */
