@@ -164,7 +164,7 @@ We made it!It's amazing!!\n", \
 
 运行结果如下图所示：
 
-![乱序](picture/luan.png)
+![乱序](pictures/luan.png)
 
 可以看出，程序成功**打印出了格式化内容**，但是出现了**混乱交错的现象**，因此还需要添加一种同步机制来协调共享资源的有序使用。
 
@@ -195,7 +195,7 @@ spinlock_release(&print_lk);//解锁
 
 使用完自旋锁后，针对3.2中同样的测试用例，打印结果如下：
 
-![有序](picture/youxu.png)
+![有序](pictures/youxu.png)
 
 成功完成了两个核的有序输出！
 
