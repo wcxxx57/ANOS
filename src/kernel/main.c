@@ -3,11 +3,9 @@
 
 int main()
 {
-    printf("Hello OS Kernel!\n");
-    printf("Integer: %d\n", -123);
-    printf("Hex32: %p\n", 0xdeadbeefU);
-    printf("Hex64: %x\n", 0x1a2b3c4d5e6f7080ULL);
-    printf("Char: %c, String: %s\n", 'K', "Kernel Mode");
-    printf("Null string: %s\n", (char*)0);
+    printf("Hello!This is our OS Kernel!This Kernel is written by %d people:%s and %s.\n \
+Let's try and print %c,%p and %x.\n \
+We made it!It's amazing!!\n", \
+2, "dxy", "wcx", 'A', 0x12345678U, 0x1234567890abcdefULL);
     return 0;
 }
