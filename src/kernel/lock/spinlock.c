@@ -32,7 +32,7 @@ void pop_off(void)
 }
 
 
-// 自选锁初始化
+// 自旋锁初始化
 void spinlock_init(spinlock_t *lk, char *name)
 {
     // 初始状态：未上锁（无cpu持有该锁）
@@ -48,7 +48,7 @@ bool spinlock_holding(spinlock_t *lk)
     return lk->locked && lk->cpuid == mycpuid();
 }
 
-// 获取自选锁
+// 获取自旋锁
 // 原地循环，直到能够获取锁
 void spinlock_acquire(spinlock_t *lk)
 {

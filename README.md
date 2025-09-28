@@ -1,10 +1,15 @@
 # LAB-1: 机器启动
 
-lab1的核心目标是**机器启动**，具体来讲，我们主要完成了
+lab1的核心目标是**机器启动**，具体来讲，我们主要完成了：
 
 1. 通过BIOS→_entry→start→main**进入main函数**
 2. 借助MMIO读写串口设备（UART） 寄存器以完成**字符打印**，并借助stdarg.h的va_list类型实现**printf格式化输出**
 3. 通过编写自旋锁函数并在printf中使用以实现双核的**有序输出**
+
+我们的分工如下：
+- **吴晨曦**：完成了`start.c`和`print.c `，以及对应的实验文档。
+- **丁熙妍**：完成了`spinlock.c`和`main.c `，以及对应的实验文档。
+
 
 ## 1. 代码组织结构
 
@@ -172,7 +177,96 @@ We made it!It's amazing!!\n", \
 
 ### 4.1 自旋锁接口的实现
 
-自旋锁接口的实现在spinlock.c文件中
+#### 4.1.1 `spinlock_init`：锁的初始化
+初始化自旋锁：
+- 将锁的状态设为`0`，表示**未上锁**；
+- 将锁的名字设为`name`；
+- 将持有锁的cpuid设为`-1`，表示**无cpu持有该锁**。
+
+```c
+// 自旋锁初始化
+void spinlock_init(spinlock_t *lk, char *name)
+{
+    // 初始状态：未上锁（无cpu持有该锁）
+    lk->locked = 0;
+    lk->name = name;
+    lk->cpuid = -1;
+}
+```
+
+#### 4.1.2 `spinlock_holding`：是否持有锁
+辅助函数：
+用于判断当前 CPU 是否正持有指定的锁。
+
+```c
+// 是否持有自旋锁
+bool spinlock_holding(spinlock_t *lk)
+{
+    // 检查当前的cpu是否持有该锁
+    return lk->locked && lk->cpuid == mycpuid();
+}
+```
+
+#### 4.1.3 `spinlock_acquire`：获取锁
+获取指定锁，如果锁已被占用，则**原地等待**。
+- 在获取锁之前使用`push_off()`**关闭中断**，防止**死锁**。
+- 使用`assert`和`spinlock_holding`确保当前cpu没有持有该锁，否则无需再获取该锁。
+- 使用**原子操作**`__sync_lock_test_and_set(&lk->locked, 1)`获取锁，它将`lk->locked` 的值设置为 `1`，并返回设置前的旧值。
+    - 如果旧值是 `0`，表示锁正空闲，则成功获取锁，循环结束。
+    - 如果旧值是 `1`，表示锁已被占用，则继续**在 `while` 循环中“自旋”等待，直到该锁空闲。**
+- 使用**原子操作**`__sync_synchronize()`作为**内存屏障**，确保临界区代码不会被乱序执行到锁的外面。
+- 最后成功获取锁之后，更新持有该锁的cpu信息。
+  
+```c
+// 获取自旋锁
+// 原地循环，直到能够获取锁
+void spinlock_acquire(spinlock_t *lk)
+{
+    // 关中断
+    push_off();
+
+    // 确保当前cpu没有已经持有该锁
+    assert(!spinlock_holding(lk),"spinlock_acquire: lock is already held by this cpu\n");
+
+    // 自旋等待，直到成功获取锁
+    while (__sync_lock_test_and_set(&lk->locked,1)!=0) // 原子操作：尝试获取锁
+        ;
+
+    // 防止指令的乱序执行导致锁机制失效
+    __sync_synchronize();
+    // 记录该锁的cpu信息
+
+    lk->cpuid = mycpuid();
+}
+```
+
+#### 4.1.4 `spinlock_release`：释放锁
+释放指定的已持有的锁：
+- 使用`assert`和`spinlock_holding`确保只有该锁的持有者才能释放锁。
+- 清除持有该锁的cpu信息。
+- 使用**原子操作**`__sync_synchronize()`作为**内存屏障**。
+- 使用**原子操作**`__sync_lock_release(&lk->locked)`释放锁：将 `lk->locked` 的值设置为 `0`，让其他等待的cpu可以获取该锁。
+- 使用`pop_off()`**恢复之前的中断状态**。
+  
+```c
+// 释放自旋锁
+void spinlock_release(spinlock_t *lk)
+{
+    // 确保当前cpu持有锁
+    assert(spinlock_holding(lk),"spinlock_release: lock is not held by this cpu\n");
+
+    // 清除该锁的cpu信息
+    lk->cpuid = -1;
+
+    __sync_synchronize();
+
+    // 释放锁
+    __sync_lock_release(&lk->locked); // 原子操作
+
+    // 开中断
+    pop_off();
+}
+```
 
 ### 4.2 在printf函数中使用自旋锁
 
@@ -186,12 +280,43 @@ for(p = fmt;*p;p++){//解析并输出格式字符串
         case 'b':
             ...
         case ...
-            。。。
+            ...
     }
 }
 
 spinlock_release(&print_lk);//解锁
 ```
+
+#### 4.2.1 双核的机器启动
+
+使用完自旋锁后，可完成双核启动的**main.c**：
+
+```c
+volatile static int started = 0;
+
+int main()
+{
+    int cpuid = r_tp();
+    if (cpuid == 0) {
+        print_init();
+        printf("CPU %d is booting!\n", cpuid);
+        __sync_synchronize();
+        started = 1;
+    } else {
+        while (started == 0);
+        __sync_synchronize();
+        printf("CPU %d is booting!\n", cpuid);
+    }
+    while (1);
+}
+```
+
+结果如下：
+![alt text](pictures/boot.png)
+成功完成了两个核的机器启动！
+
+
+#### 4.2.2 有序输出
 
 使用完自旋锁后，针对3.2中同样的测试用例，打印结果如下：
 
@@ -199,11 +324,7 @@ spinlock_release(&print_lk);//解锁
 
 成功完成了两个核的有序输出！
 
-## 5. 课后实验
-
-这里有两个额外的实验帮助你理解锁的用处 
-
-### 5.1 并行加法
+### 4.3 并行加法
 
 ``` 
     volatile static int started = 0;
@@ -235,28 +356,222 @@ spinlock_release(&print_lk);//解锁
 
 在 **main.c** 中测试上述代码，很明显，我们的预期是后report的cpu应该告诉我们 `sum = 2000000`
 
-但是实际结果可能是这样的  
+但是实际结果是这样的：  
+
+![alt text](pictures/sum_bug.png)
+
+这是并发编程中的一个经典场景 -- **竞态条件**：
+在未加锁的代码中，`sum++`这个**非原子操作**在底层会这样进行：
+1. 读取`sum`的值到 CPU 寄存器。
+2. 在寄存器中将值+1。
+3. 将新值写回内存中的`sum`。
+
+因此当两个cpu并发执行时，可能会发生：
+1. cpu 0 读取`sum` (此时值为`x`)。
+2. cpu 1 也读取`sum`(值仍为`x`)。
+3. cpu 0 计算得`x + 1`，并将`x + 1`写回 sum。
+4. cpu 1 计算得`x + 1`，并将`x + 1`写回 sum。
+此时两个cpu的执行了加法，但结果是`sum`**只+1，而不是我们希望的+2**。
+
+为了解决这个问题，我们需要**利用锁**来保证`sum++`“读-改-写”这三个步骤的**原子性**：
+- 在`sum++`**前**先**获取**一个锁
+- 在`sum++`**后**再**释放**掉这个锁
+  
+修改后的 **main.c** 如下：
+
+```c
+volatile static int started = 0;
+volatile static int sum = 0;
+
+spinlock_t sum_lock; // 为sum定义一个锁
+
+int main()
+{
+    int cpuid = r_tp();
+    if(cpuid == 0) {
+        print_init();
+        spinlock_init(&sum_lock, "sum_lock"); // 初始化锁
+        printf("cpu %d is booting!\n", cpuid);        
+        __sync_synchronize();
+        started = 1;
+        for(int i = 0; i < 1000000; i++)
+        {
+            spinlock_acquire(&sum_lock); // 在sum++前获取锁
+            sum++;
+            spinlock_release(&sum_lock); // 在sum++后释放锁
+        }
+        printf("cpu %d report: sum = %d\n", cpuid, sum);
+    } else {
+        while(started == 0);
+        __sync_synchronize();
+        printf("cpu %d is booting!\n", cpuid);
+        for(int i = 0; i < 1000000; i++)
+        {
+            spinlock_acquire(&sum_lock); // 在sum++前获取锁
+            sum++;
+            spinlock_release(&sum_lock); // 在sum++后释放锁
+        }
+        printf("cpu %d report: sum = %d\n", cpuid, sum);
+    }   
+    while (1);    
+}  
+```
+
+修改后的输出如下：
+
+![alt text](pictures/sum_correct.png) 
+成功完成了两个核的并行加法！
+
+
+但这不是唯一解法，刚才是**在for循环内**加锁和解锁，而我们还可以**在for循环外**加锁和解锁：
+
+```c
+ spinlock_acquire(&sum_lock); // 在循环外获取锁
+        for(int i = 0; i < 1000000; i++)
+            sum++;
+        spinlock_release(&sum_lock); // 在循环外释放锁
+```
+
+输出如下：
+![alt text](pictures/sum_outside.png)
+也成功完成了两个核的并行加法！
+
+但可以看出，**上锁和解锁的位置不同**会极大地影响程序的行为和性能，这被称为**锁的粒度**。
+**1. 细粒度锁：在 for 循环内部加锁和解锁**
+   
+```c
+for(int i = 0; i < 1000000; i++) {
+    spinlock_acquire(&sum_lock); // 循环内加锁
+    sum++;
+    spinlock_release(&sum_lock); // 循环内解锁
+}
+```
+
+- 行为：
+  两个cpu是**同时、交替**地对`sum`进行累加。每个cpu在每次循环中的会尝试获取锁，获取到的会执行`sum++`，执行完后会立即释放锁。
+- 并行度：
+  锁的持有时间极短，只保护了`sum++`这个最小的临界区。循环变量`i`的增减和判断等操作仍然是并行执行的，因此**并行度高**。
+- 性能开销：
+  每个cpu都要执行100万次加锁和解锁，**总的锁操作开销巨大**。
+
+
+**2. 粗粒度锁：在 for 循环外部加锁和解锁**
+   
+```c
+spinlock_acquire(&sum_lock); // 循环外加锁
+for(int i = 0; i < 1000000; i++) {
+    sum++;
+}
+spinlock_release(&sum_lock); // 循环外解锁
+```
+
+- 行为：
+  一个cpu（如cpu 0）先获取了锁，然后**独自完成了全部100万次累加**，此时sum变为1000000，再释放锁。在这个过程中，另一个cpu（cpu 1）**只能不停地“自旋”等待**。当cpu 0释放后，cpu 1才能获取锁，继续从1000000开始累加，最终得到2000000。
+- 并行度：
+  实际上是cpu 0先做，做完之后cpu 1再做，因此本质上是**串行**，而不是并行。
+- 性能开销：
+  每个cpu只需要执行一次加锁和解锁，**锁操作的开销极小**。
+
+因此，选择锁的粒度是在 “**锁操作开销**” 和 “**并行度**” 之间的一种平衡：
+锁的粒度越细，临界区越小，允许多个核心同时执行的代码就越多，并行度越高；但加锁/解锁更频繁，导致锁操作开销更大。
+
+
+### 4.4 补充测试: 锁的嵌套调用
+**在并行加法的循环中加入 `printf` 调用**，使得每个cpu在持有 `sum_lock` 的同时，还会去竞争 `print_lk`，检验**多重锁**环境下我们写的代码是否能正常工作。
+
+在 **main.c** 中测试以下代码：
+
+```c
+volatile static int started = 0;
+volatile static int sum = 0;
+spinlock_t sum_lock;
+
+int main()
+{
+    int cpuid = r_tp();
+    if(cpuid == 0) {
+        print_init();
+        spinlock_init(&sum_lock, "sum_lock");
+        printf("CPU %d is booting!\n", cpuid);
+        __sync_synchronize();
+        started = 1;
+
+        for(int i = 0; i < 20; i++)
+        {
+            spinlock_acquire(&sum_lock);
+            sum++;
+            // 在持有 sum_lock 的同时，调用 printf （会尝试获取 print_lk）
+            printf("CPU %d: sum is now %d, loop index is %d\n", cpuid, sum, i);
+            spinlock_release(&sum_lock);
+        }
+        printf("CPU %d finished. Final sum: %d\n", cpuid, sum);
+
+    } else {
+        while(started == 0);
+        __sync_synchronize();
+        printf("CPU %d is booting!\n", cpuid);
+
+        for(int i = 0; i < 20; i++)
+        {
+            spinlock_acquire(&sum_lock);
+            sum++;
+            // 在持有 sum_lock 的同时，调用 printf
+            printf("CPU %d: sum is now %d, loop index is %d\n", cpuid, sum, i);
+            spinlock_release(&sum_lock);
+        }
+        printf("CPU %d finished. Final sum: %d\n", cpuid, sum);
+    }   
+    while (1);    
+}
+```
+
+输出如下：
 
 ```
-cpu 0 is booting!
-cpu 1 is booting!
-cpu 0 report: sum = 1128497
-cpu 1 report: sum = 1143332
+CPU 0 is booting!
+CPU 0: sum is now 1, loop index is 0
+CPU 1 is booting!
+CPU 0: sum is now 2, loop index is 1
+CPU 0: sum is now 3, loop index is 2
+CPU 0: sum is now 4, loop index is 3
+CPU 1: sum is now 5, loop index is 0
+CPU 0: sum is now 6, loop index is 4
+CPU 1: sum is now 7, loop index is 1
+CPU 0: sum is now 8, loop index is 5
+CPU 1: sum is now 9, loop index is 2
+CPU 0: sum is now 10, loop index is 6
+CPU 1: sum is now 11, loop index is 3
+CPU 0: sum is now 12, loop index is 7
+CPU 1: sum is now 13, loop index is 4
+CPU 0: sum is now 14, loop index is 8
+CPU 1: sum is now 15, loop index is 5
+CPU 0: sum is now 16, loop index is 9
+CPU 1: sum is now 17, loop index is 6
+CPU 0: sum is now 18, loop index is 10
+CPU 0: sum is now 19, loop index is 11
+CPU 1: sum is now 20, loop index is 7
+CPU 0: sum is now 21, loop index is 12
+CPU 0: sum is now 22, loop index is 13
+CPU 1: sum is now 23, loop index is 8
+CPU 0: sum is now 24, loop index is 14
+CPU 1: sum is now 25, loop index is 9
+CPU 0: sum is now 26, loop index is 15
+CPU 1: sum is now 27, loop index is 10
+CPU 0: sum is now 28, loop index is 16
+CPU 1: sum is now 29, loop index is 11
+CPU 0: sum is now 30, loop index is 17
+CPU 1: sum is now 31, loop index is 12
+CPU 0: sum is now 32, loop index is 18
+CPU 1: sum is now 33, loop index is 13
+CPU 0: sum is now 34, loop index is 19
+CPU 1: sum is now 35, loop index is 14
+CPU 0 finished. Final sum: 35
+CPU 1: sum is now 36, loop index is 15
+CPU 1: sum is now 37, loop index is 16
+CPU 1: sum is now 38, loop index is 17
+CPU 1: sum is now 39, loop index is 18
+CPU 1: sum is now 40, loop index is 19
+CPU 1 finished. Final sum: 40
 ```
 
-考虑如何使用锁进行修正，修正后的输出可能是这样的  
-
-```
-cpu 0 is booting!
-cpu 1 is booting!
-cpu 0 report: sum = 1996573
-cpu 1 report: sum = 2000000
-```
-
-简单说明上锁和解锁的位置不同会有什么影响（tips: 锁的粒度粗细）
-
-### 5.2 并行输出  
-
-尝试去掉`printf`里的锁，参考4.1的实验思路，设计测试方法使得`printf`的输出出现交错的情况  
-
-4.1和4.2的测试代码和实验结果可以附在你的README中, 但是不要体现在你的代码里
+成功完成了锁的嵌套调用！
