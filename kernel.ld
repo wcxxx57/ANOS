@@ -38,5 +38,7 @@ SECTIONS
     *(.bss .bss.*)
   }
 
-  PROVIDE(end = .);
+  . = ALIGN(4096);
+  PROVIDE(ALLOC_BEGIN = .);
+  PROVIDE(ALLOC_END = 0x80000000 + 128M);
 }
