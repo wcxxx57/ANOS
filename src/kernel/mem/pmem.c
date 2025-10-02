@@ -43,8 +43,34 @@ void pmem_init(void)
 // 失败则panic锁死
 void* pmem_alloc(bool in_kernel)
 {
+    // 申请一个空闲页面：
+    // 取出空闲链表的第一个空闲页作为分配的页面，并清零后返回
+
     page_node_t *page;
 
+    // 分配区域：内核区域 or 用户区域
+    alloc_region_t *ar = &user_region;
+    if (in_kernel)
+    {
+        ar = &kern_region;
+    }
+
+    // 取出空闲链表的第一个节点
+    spinlock_acquire(&ar->lk);
+    page = ar->list_head.next;
+    if (page) {
+        ar->list_head.next = page->next;
+        ar->allocable--;
+    }
+    spinlock_release(&ar->lk);
+
+    // 分配失败，则panic锁死
+    if (!page) {
+        panic("pmem_alloc: out of memory");
+    }
+
+    // 清零后返回
+    memset(page, 0, PGSIZE);
     return page;
 }
 
@@ -52,5 +78,33 @@ void* pmem_alloc(bool in_kernel)
 // 失败则panic锁死
 void pmem_free(uint64 page, bool in_kernel)
 {
+    // page: 要释放的物理页的起始地址
+    // 释放一个之前申请的物理页：
+    // 将它插入空闲链表的表头
 
+    // 分配区域：内核区域 or 用户区域
+    alloc_region_t *ar = &user_region;
+    if (in_kernel)
+    {
+        ar = &kern_region;
+    }
+
+    // 检查page的合法性
+    if (page % PGSIZE != 0 || page < ar->begin || page >= ar->end)
+    {
+        panic("pmem_free: invalid page");
+    }
+
+    // 调试用：填充为垃圾值
+    memset((void *)page, 1, PGSIZE);
+
+    // 插入到空闲链表的表头
+    page_node_t *p = (page_node_t *)page;
+    spinlock_acquire(&ar->lk);
+    p->next = ar->list_head.next;
+    ar->list_head.next = p;
+    ar->allocable++;
+    spinlock_release(&ar->lk);
 }
+
+
