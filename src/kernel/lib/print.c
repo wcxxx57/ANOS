@@ -134,8 +134,8 @@ void panic(const char *s)
     push_off(); //关中断
 
     if(!panicked){ //避免不同核重复调用
-        panicked = 1;
         printf("panic! %s\n", s?s:"<null>"); //报错
+        panicked = 1;
     }
 
     while (1){
