@@ -230,7 +230,7 @@ void pmem_free(uint64 page, bool in_kernel)
 
 ### 1.4 测试用例
 
-**test-1：**
+#### test-1：
 
 ```c
 volatile static int started = 0;
@@ -304,7 +304,7 @@ int main()
 成功通过test_1！
 
 
-**test-2：**
+#### test-2：
 
 ```c
 // 测试目标：耗尽内核/用户区域内存 
