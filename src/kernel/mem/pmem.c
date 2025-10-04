@@ -107,4 +107,3 @@ void pmem_free(uint64 page, bool in_kernel)
     spinlock_release(&ar->lk);
 }
 
-
