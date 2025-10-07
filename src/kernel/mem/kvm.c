@@ -20,7 +20,7 @@ pte_t *vm_getpte(pgtbl_t pgtbl, uint64 va, bool alloc)
 
     pgtbl_t curr = pgtbl;  // 当前正在查看的页表
 
-    // 只处理 level=2 和 level=1（中间层）
+    // level=2 和 level=1（中间层）
     for (int level = 2; level > 0; level--) {
         int idx = VA_TO_VPN(va, level);   // 获取当前层级的索引
         pte_t *pte = &curr[idx];          // 当前层级的 PTE
@@ -28,7 +28,7 @@ pte_t *vm_getpte(pgtbl_t pgtbl, uint64 va, bool alloc)
         if (*pte & PTE_V) {               // PTE 有效
             if (PTE_CHECK(*pte)) {        // 是中间节点（R/W/X=0）
                 uint64 child_pa = PTE_TO_PA(*pte);
-                curr = (pgtbl_t)child_pa; // 跳转到下一级页表（假设已映射）
+                curr = (pgtbl_t)child_pa; // 跳转到下一级页表
             } else {
                 return NULL; // 非法：中间节点设置了 R/W/X
             }
@@ -81,14 +81,13 @@ void vm_mappages(pgtbl_t pgtbl, uint64 va, uint64 pa, uint64 len, int perm)
     uint64 end = va + len;  // 结束虚拟地址
 
     while (va < end) {
-        // Step 1: 获取当前虚拟地址对应的 PTE 指针
-        //        如果路径不存在，自动创建中间页表
+        // Step 1: 获取当前虚拟地址对应的 PTE 指针(如果路径不存在，自动创建中间页表)
         pte_t *pte = vm_getpte(pgtbl, va, true);
         if (!pte) {
             panic("vm_mappages: cannot create PTE (out of memory?)");
         }
 
-        // Step 2: 构造新的 PTE
+        // Step 2: 修改 PTE
         //         将物理地址 pa 编码为 PPN 字段，并加上权限和 V 标志
         uint64 pte_flags = PA_TO_PTE(pa) | perm | PTE_V;
         *pte = pte_flags;
@@ -129,10 +128,8 @@ void vm_unmappages(pgtbl_t pgtbl, uint64 va, uint64 len, bool freeit)
         if (freeit) {
             uint64 pa = PTE_TO_PA(*pte);
             
-            // 判断是否在内核区域并释放
-            bool in_kernel = (pa >= (uint64)ALLOC_BEGIN) && 
-                 (pa <  (uint64)ALLOC_BEGIN + KERN_PAGES * PGSIZE);
-            pmem_free(pa, in_kernel);
+            // 释放 默认是用户的物理页
+            pmem_free(pa, false);
         }
 
         // Step 3: 将 PTE 标记为无效（解除映射）
@@ -155,13 +152,13 @@ void kvm_init()
     memset(kernel_pgtbl, 0, PGSIZE);  // 清零
 
     // === Step 2: 获取内核代码和数据的范围 ===
-    uint64 text_start = KERNEL_BASE;           // 明确写死为 0x80000000
+    uint64 text_start = KERNEL_BASE;           
     uint64 data_end   = (uint64)ALLOC_BEGIN;   // 数据段结束位置
     uint64 size = data_end - text_start;
     uint64 map_size = (size + PGSIZE - 1) & ~(PGSIZE - 1);
     
 
-    // === Step 3: 恒等映射内核代码和数据区 [0x80000000, ALLOC_BEGIN)===
+    // === Step 3: 恒等映射内核代码和数据区===
     vm_mappages(kernel_pgtbl,
                 text_start,
                 text_start,           // va = pa
