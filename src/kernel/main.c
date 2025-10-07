@@ -57,6 +57,44 @@ void test_mapping_and_unmapping()
     printf("test_mapping_and_unmapping passed!\n");
 }
 
+void test_vm_edge_cases()
+{
+    pgtbl_t pgtbl = (pgtbl_t)pmem_alloc(true);
+    memset(pgtbl, 0, PGSIZE);
+
+    uint64 pa1 = (uint64)pmem_alloc(false);
+    uint64 pa2 = (uint64)pmem_alloc(false);
+
+    pte_t *pte;
+
+    // Test 1: 映射 VA=0
+    vm_mappages(pgtbl, 0, pa1, PGSIZE, PTE_R);
+    pte = vm_getpte(pgtbl, 0, false);
+    assert(pte && (*pte & PTE_V), "test_vm_edge_cases: mapping va=0 failed");
+    assert(PTE_TO_PA(*pte) == pa1, "test_vm_edge_cases: pa mismatch at va=0");
+
+    // Test 2: 映射接近 VA_MAX 的地址
+    uint64 high_va = VA_MAX - PGSIZE;
+    vm_mappages(pgtbl, high_va, pa2, PGSIZE, PTE_X);
+    pte = vm_getpte(pgtbl, high_va, false);
+    assert(pte && (*pte & PTE_V), "test_vm_edge_cases: high va mapping failed");
+    assert(PTE_TO_PA(*pte) == pa2, "test_vm_edge_cases: pa mismatch at high va");
+
+    // Test 3: 解除映射并验证
+    vm_unmappages(pgtbl, 0, PGSIZE, true);
+    pte = vm_getpte(pgtbl, 0, false);
+    assert(pte && !(*pte & PTE_V), "test_vm_edge_cases: unmap failed for va=0");
+
+    // Test 4: 尝试 remap 到同一 VA（更新权限）
+    uint64 pa3 = (uint64)pmem_alloc(false);
+    vm_mappages(pgtbl, 0, pa3, PGSIZE, PTE_W | PTE_X);
+    pte = vm_getpte(pgtbl, 0, false);
+    assert((*pte & (PTE_W | PTE_X)) == (PTE_W | PTE_X), 
+           "test_vm_edge_cases: permission not set correctly");
+
+    printf("test_vm_edge_cases passed!\n");
+}
+
 int main()
 {
     // int cpuid = r_tp();
@@ -148,6 +186,7 @@ int main()
     }
 
     test_mapping_and_unmapping();
+    test_vm_edge_cases();
     
     while (1); 
 }
