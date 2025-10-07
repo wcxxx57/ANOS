@@ -3,69 +3,55 @@
 // 内核页表
 static pgtbl_t kernel_pgtbl;
 
+//设定设备的物理地址
+#define UART_ADDR      0x10000000ULL
+#define CLINT_ADDR     0x02000000ULL
+#define PLIC_ADDR      0x0C000000ULL
+
 // 根据pagetable,找到va对应的pte
 // 若设置alloc=true 则在PTE无效时尝试申请一个物理页
 // 成功返回PTE, 失败返回NULL
 // 提示：使用 VA_TO_VPN + PTE_TO_PA + PA_TO_PTE
 pte_t *vm_getpte(pgtbl_t pgtbl, uint64 va, bool alloc)
 {
-    // va不能超过最大虚拟地址
+    // 检查地址合法性
     if (va >= VA_MAX)
         return NULL;
-    
-    //从顶级页表开始往下找
-    for (int level = 2;level >= 0;level--) {
-        // 计算va在当前页表的索引
-        int idx = VA_TO_VPN(va, level);
 
-        //获取当前层级页表的pte
-        pte_t *pte = &pgtbl[idx];
-        
-        //检查 PTE 是否有效
-        if (*pte & PTE_V) {// PTE 有效
-            
-            if (level == 0) {//到达最后一层，找到目标 PTE
-                return pte;
-            }
+    pgtbl_t curr = pgtbl;  // 当前正在查看的页表
 
-            // 当前不是叶子层，需要进入下一级页表
-            // 检查是否为中间节点（必须R=W=X=0）
-            if (PTE_CHECK(*pte)) {
-                // 是中间页表节点，获取其指向的物理地址
+    // 只处理 level=2 和 level=1（中间层）
+    for (int level = 2; level > 0; level--) {
+        int idx = VA_TO_VPN(va, level);   // 获取当前层级的索引
+        pte_t *pte = &curr[idx];          // 当前层级的 PTE
+
+        if (*pte & PTE_V) {               // PTE 有效
+            if (PTE_CHECK(*pte)) {        // 是中间节点（R/W/X=0）
                 uint64 child_pa = PTE_TO_PA(*pte);
-                // 转换为内核虚拟地址（假设恒等映射或已映射）
-                pgtbl = (pgtbl_t)child_pa;
-                // 继续下一层循环
+                curr = (pgtbl_t)child_pa; // 跳转到下一级页表（假设已映射）
             } else {
-                // 错误：非叶子层却有 R/W/X 权限 → 不该出现在中间路径上
+                return NULL; // 非法：中间节点设置了 R/W/X
+            }
+        } else {                          // PTE 无效
+            if (!alloc)                   // 不允许分配 → 失败
                 return NULL;
-            }
-        } else {// PTE 无效（未建立映射）
-            if (!alloc) {
-                // 不允许分配 → 查找失败
+
+            void *pa = pmem_alloc(true);  // 分配一页作为下一级页表
+            if (!pa)
                 return NULL;
-            }
-            // 分配一个新的物理页作为下一级页表
-            void *pa = pmem_alloc(true);  // 从内核区域分配一页
-            if (!pa) {
-                return NULL;// 分配失败
-            }
+            memset(pa, 0, PGSIZE);        // 清零
 
-            // 清零新页表（避免垃圾数据）
-            memset(pa, 0, PGSIZE);
+            uint64 child_ppn = PA_TO_PTE((uint64)pa);
+            *pte = child_ppn | PTE_V;     // 设置 PTE 指向新页表
 
-            // 构造新的 PTE：指向这个新页表
-            uint64 child_ppn = PA_TO_PTE((uint64)pa);  // 转成 PTE 格式的 PPN
-            *pte = child_ppn | PTE_V;                  // 设置为有效，无 R/W/X（中间节点）
-
-            // 更新当前页表指针为新分配的页表
-            pgtbl = (pgtbl_t)pa;
-            // 继续进入下一层
+            curr = (pgtbl_t)pa;           // 更新当前页表为新分配的
         }
     }
 
-    // 逻辑上不会到这里
-    panic("vm_getpte: unreachable");
+    // 到达这里说明已经到了 level=0
+    // 返回 level-0 的 PTE 指针（不管它是否有效）
+    int idx = VA_TO_VPN(va, 0);
+    return &curr[idx];
 }
 
 // 在pgtbl中建立 [va, va + len) -> [pa, pa + len) 的映射
@@ -102,17 +88,12 @@ void vm_mappages(pgtbl_t pgtbl, uint64 va, uint64 pa, uint64 len, int perm)
             panic("vm_mappages: cannot create PTE (out of memory?)");
         }
 
-        // Step 2: 检查这个 PTE 是否已经有效（防止重复映射同一个虚拟页）
-        if (*pte & PTE_V) {
-            panic("vm_mappages: remap an already mapped page");
-        }
-
-        // Step 3: 构造新的 PTE
+        // Step 2: 构造新的 PTE
         //         将物理地址 pa 编码为 PPN 字段，并加上权限和 V 标志
         uint64 pte_flags = PA_TO_PTE(pa) | perm | PTE_V;
         *pte = pte_flags;
 
-        // Step 4: 前进到下一页
+        // Step 3: 前进到下一页
         va += PGSIZE;
         pa += PGSIZE;
     }
@@ -147,7 +128,11 @@ void vm_unmappages(pgtbl_t pgtbl, uint64 va, uint64 len, bool freeit)
         // Step 2: 如果需要，释放对应的物理页
         if (freeit) {
             uint64 pa = PTE_TO_PA(*pte);
-            pmem_free((void *)pa);  // 假设这是用户页
+            
+            // 判断是否在内核区域并释放
+            bool in_kernel = (pa >= (uint64)ALLOC_BEGIN) && 
+                 (pa <  (uint64)ALLOC_BEGIN + KERN_PAGES * PGSIZE);
+            pmem_free(pa, in_kernel);
         }
 
         // Step 3: 将 PTE 标记为无效（解除映射）
@@ -162,7 +147,56 @@ void vm_unmappages(pgtbl_t pgtbl, uint64 va, uint64 len, bool freeit)
 // 相当于部分填充kernel_pgtbl
 void kvm_init()
 {
+    // Step 1: 分配根页表（第2级页表）
+    kernel_pgtbl = (pgtbl_t)pmem_alloc(true);  // 从内核区域分配一页
+    if (!kernel_pgtbl) {
+        panic("kvm_init: cannot allocate root page table");
+    }
+    memset(kernel_pgtbl, 0, PGSIZE);  // 清零
 
+    // === Step 2: 获取内核代码和数据的范围 ===
+    uint64 text_start = KERNEL_BASE;           // 明确写死为 0x80000000
+    uint64 data_end   = (uint64)ALLOC_BEGIN;   // 数据段结束位置
+    uint64 size = data_end - text_start;
+    uint64 map_size = (size + PGSIZE - 1) & ~(PGSIZE - 1);
+    
+
+    // === Step 3: 恒等映射内核代码和数据区 [0x80000000, ALLOC_BEGIN)===
+    vm_mappages(kernel_pgtbl,
+                text_start,
+                text_start,           // va = pa
+                map_size,
+                PTE_R | PTE_W | PTE_X);  // 可读写执行
+
+    // === Step 4: 映射设备（UART/CLINT/PLIC）===
+    vm_mappages(kernel_pgtbl,
+                UART_ADDR,
+                UART_ADDR,
+                PGSIZE,
+                PTE_R | PTE_W);  // 不可执行
+
+    vm_mappages(kernel_pgtbl,
+                CLINT_ADDR,
+                CLINT_ADDR,
+                0x10000,  // 64KB
+                PTE_R | PTE_W); // 不可执行
+
+    vm_mappages(kernel_pgtbl,
+                PLIC_ADDR,
+                PLIC_ADDR,
+                0x4000000,  // ~64MB
+                PTE_R | PTE_W); // 不可执行
+
+    // === Step 5: 映射可用内存区域 [ALLOC_BEGIN, ALLOC_END) ===
+    uint64 phy_pool_begin = (uint64)ALLOC_BEGIN;
+    uint64 phy_pool_end   = (uint64)ALLOC_END;
+    uint64 phy_pool_sz    = phy_pool_end - phy_pool_begin;
+
+    vm_mappages(kernel_pgtbl,
+                phy_pool_begin,
+                phy_pool_begin,
+                phy_pool_sz,
+                PTE_R | PTE_W);  // 不可执行
 }
 
 // 每个CPU都需要调用, 从不使用页表切换到使用内核页表
@@ -197,7 +231,7 @@ void vm_print(pgtbl_t pgtbl)
                 continue;
             assert(PTE_CHECK(pte), "vm_print: pte check fail (2)");
             pgtbl_0 = (pgtbl_t)PTE_TO_PA(pte);
-            printf(".. .. level-0 pgtbl %d: pa = %p\n", j, pgtbl_2);
+            printf(".. .. level-0 pgtbl %d: pa = %p\n", j, pgtbl_0);
 
             for (int k = 0; k < PGSIZE / sizeof(pte_t); k++)
             {
