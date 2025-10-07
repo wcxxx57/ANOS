@@ -503,14 +503,14 @@ cpu 0 test over
 
 ### 2.1 相关概念与原理
 
-- **虚拟地址（VA）**结构：
+- **虚拟地址（VA**）结构：
 
   - VPN[2] + VPN[1] + VPN[0] + OFFSET
   - 9bit         9bits        9bits        12bits   （共39bits）
   - **VPN**为对应层级的**虚拟页号**，每一级的 `VPN[i]` 占 9 位，每级最多索引 512 项（因为 2^9 = 512）
   - 在`mem/type.h`中定义的宏`VA_TO_VPN(va, level)`：用于**提取第 `level` 层的虚拟页号**（9 bits）
 
-- **页表项（PTE）**结构：
+- **页表项（PTE**）结构：
 
   - reserved + PPN + RSW + D A G U X W R V
 
