@@ -312,14 +312,12 @@ int main()
 修改 **main.c**：
 
 ```c
-
 for(int i = 0; i < 1000000; i++)
 {
     spinlock_acquire(&sum_lock); // 在sum++前获取锁
     sum++;
     spinlock_release(&sum_lock); // 在sum++后释放锁
 }
-
 ```
 
 修改后的输出如下：
