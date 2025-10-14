@@ -269,11 +269,11 @@ cpu 0 test over
 
     - 页表项与物理地址的转换：页表项和物理地址中的**PPN相等**，不同点在于PA的**低12位**是offset，PTE的**低10位**是标志位。在`mem/type.h`中定义了如下**页表项与物理地址的转换**的宏`PA_TO_PTE`和`PTE_TO_PA`
 
-### 2.1 核心操作函数实现
+### 核心操作函数实现
 
 在`kvm.c`中我们按照`vm_getpte -> vm_mappages -> vm_unmappages`的顺序实现了三个核心的操作函数。
 
-#### 2.1.1 `vm_getpte`函数
+####  1.`vm_getpte`函数
 
 这个函数的目的是根据`pagetable`,找到`va`对应的`pte`，参数`alloc`表示**是否**允许在路径缺失时**自动分配中间页表**，若查找成功则返回对应的`pte`, 失败返回NULL。
 
@@ -296,7 +296,7 @@ int idx = VA_TO_VPN(va, 0);
 return &curr[idx]; //直接返回当前PTE
   ```
 
-  #### 2.1.2 `vm_mappages`函数
+  ####  2.`vm_mappages`函数
 
   这个函数的作用是在页表`pgtbl`中**建立**` [va, va + len)` -> `[pa, pa + len)` 的**映射**，参数`perm`表示构造的新的PTE的**权限标志**（标记可读、可写、可执行等）。
 
@@ -315,7 +315,7 @@ pte_t *pte = vm_getpte(pgtbl, va, true); //获取当前虚拟地址对应的 PTE
 *pte = PA_TO_PTE(pa) | perm | PTE_V;//修改 PTE
   ```
 
-  #### 2.1.3 `vm_unmappages`函数
+  #### 3. `vm_unmappages`函数
 
   这个函数的作用和上一个`vm_mappages`函数相对，用来在页表 `pgtbl` 中**解除虚拟地址区间 `[va, va + len)` 的映射并释放资源**的函数，参数`freeit`表示**是否释放对应的物理资源**，如果`freeit` = true则释放对应物理页（因为题目中说**默认释放的是用户的物理页**，所以使用`pmem_free(pa, false)`释放物理页的时候第二个参数**可以这样直接写为`false`，不用再判断`pa`到底属于哪个区域**了，之前刚开始写的时候还有点拿不准）。
 
@@ -332,11 +332,11 @@ if (freeit) {// 如果需要，释放对应的物理页
 *pte = 0;//3将 PTE 标记为无效（解除映射）
   ```
 
-  ### 2.2 设置内核页表映射并启用
+  ### 设置内核页表映射并启用
 
   完成三个核心的页表操作函数后，需要给内核页表` kernel_pgtbl`设置映射关系并为每个CPU启用它，对应的函数在：`kvm_init` -> `kvm_inithart`
 
-  #### 2.2.1 `kvm_init`函数
+  #### 1. `kvm_init`函数
 
   该函数的作用是完成UART、CLINT、PLIC、内核代码区、内核数据区、可分配区域的页表映射。
 
@@ -373,11 +373,9 @@ vm_mappages(kernel_pgtbl,PLIC_ADDR,PLIC_ADDR,0x4000000,PTE_R | PTE_W); // PLIC
 vm_mappages(kernel_pgtbl,phy_pool_begin,phy_pool_begin,phy_pool_sz,PTE_R | PTE_W);  // 不可执行
   ```
 
-  #### 2.2.2 `kvm_inithart`函数
+  #### 2. `kvm_inithart`函数
 
-  这是用于在每个 CPU 核心（hart）上初始化虚拟内存系统 的函数，即**启用分页机制，切换到内核页表**。`satp`寄存器是一个告诉 CPU **当前使用的页表根地址**在哪里，以及**是否启用虚拟内存**（分页机制）的寄存器。
-
-  这个启动函数源码中已经写好了，包含以下两个步骤
+  这是用于在每个 CPU 核心（hart）上初始化虚拟内存系统 的函数，即**启用分页机制，切换到内核页表**。`satp`寄存器是一个告诉 CPU **当前使用的页表根地址**在哪里，以及**是否启用虚拟内存**（分页机制）的寄存器。这个启动函数源码中已经写好了，包含以下两个步骤：
 
   - 写入 `satp` 寄存器
   - 刷新TLB缓存
@@ -385,7 +383,7 @@ vm_mappages(kernel_pgtbl,phy_pool_begin,phy_pool_begin,phy_pool_sz,PTE_R | PTE_W
   调用了这个函数后，就**启用了内核页表**，也**就是可以开始使用虚拟地址**了！
 
 
-### 2.3 测试用例
+### 测试用例
 
 #### test-1
 
