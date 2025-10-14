@@ -3,11 +3,6 @@
 // 内核页表
 static pgtbl_t kernel_pgtbl;
 
-//设定设备的物理地址
-#define UART_ADDR      0x10000000ULL
-#define CLINT_ADDR     0x02000000ULL
-#define PLIC_ADDR      0x0C000000ULL
-
 // 根据pagetable,找到va对应的pte
 // 若设置alloc=true 则在PTE无效时尝试申请一个物理页
 // 成功返回PTE, 失败返回NULL
@@ -167,20 +162,20 @@ void kvm_init()
 
     // === Step 4: 映射设备（UART/CLINT/PLIC）===
     vm_mappages(kernel_pgtbl,
-                UART_ADDR,
-                UART_ADDR,
+                UART_BASE,
+                UART_BASE,
                 PGSIZE,
                 PTE_R | PTE_W);  // 不可执行
 
     vm_mappages(kernel_pgtbl,
-                CLINT_ADDR,
-                CLINT_ADDR,
+                CLINT_BASE,
+                CLINT_BASE,
                 0x10000,  // 64KB
                 PTE_R | PTE_W); // 不可执行
 
     vm_mappages(kernel_pgtbl,
-                PLIC_ADDR,
-                PLIC_ADDR,
+                PLIC_BASE,
+                PLIC_BASE,
                 0x4000000,  // ~64MB
                 PTE_R | PTE_W); // 不可执行
 
