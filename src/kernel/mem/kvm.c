@@ -84,8 +84,7 @@ void vm_mappages(pgtbl_t pgtbl, uint64 va, uint64 pa, uint64 len, int perm)
 
         // Step 2: 修改 PTE
         //         将物理地址 pa 编码为 PPN 字段，并加上权限和 V 标志
-        uint64 pte_flags = PA_TO_PTE(pa) | perm | PTE_V;
-        *pte = pte_flags;
+        *pte = PA_TO_PTE(pa) | perm | PTE_V;
 
         // Step 3: 前进到下一页
         va += PGSIZE;
