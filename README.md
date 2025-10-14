@@ -265,77 +265,35 @@ cpu 0 test over
 
   - **页表项和物理地址（PA）：**
 
-    - 物理地址（PA）结构位：PPN（44位有效）+ OFFSET（12位），其中offset为0，因为**页（Page**）是内存管理的基本单位，操作系统只按“整页”来分配和映射内存。所以所有被映射的物理地址都必须是 **4KB 对齐**的，即**低 12 位为 0** → offset = 0。
+    - 物理地址（PA）结构位：PPN（44位有效）+ OFFSET（12位），其中offset为0。
 
-    - 页表项与物理地址的转换：页表项和物理地址中的**PPN相等**，不同点在于PA的**低12位**是offset，PTE的**低10位**是标志位。在`mem/type.h`中定义了如下**页表项与物理地址的转换**的宏：
+    - 页表项与物理地址的转换：页表项和物理地址中的**PPN相等**，不同点在于PA的**低12位**是offset，PTE的**低10位**是标志位。在`mem/type.h`中定义了如下**页表项与物理地址的转换**的宏`PA_TO_PTE`和`PTE_TO_PA`
 
-      ```c
-      #define PA_TO_PTE(pa)  ((((uint64)(pa)) >> 12) << 10)
-      先直接去掉为0的12位offset 再左移10位给flag挪位置
-      #define PTE_TO_PA(pte) (((uint64)(pte) >> 10) << 12)
-      先去掉10位标志位再恢复12位offset
-      ```
+### 2.1 核心操作函数实现
 
-  ### 2.1 核心操作函数实现
+在`kvm.c`中我们按照`vm_getpte -> vm_mappages -> vm_unmappages`的顺序实现了三个核心的操作函数。
 
-  在`kvm.c`中我们按照`vm_getpte -> vm_mappages -> vm_unmappages`的顺序实现了三个核心的操作函数。
+#### 2.1.1 `vm_getpte`函数
 
-  #### 2.1.1 `vm_getpte`函数
+这个函数的目的是根据`pagetable`,找到`va`对应的`pte`，参数`alloc`表示**是否**允许在路径缺失时**自动分配中间页表**，若查找成功则返回对应的`pte`, 失败返回NULL。
 
-  这个函数的目的是根据`pagetable`,找到`va`对应的`pte`，参数`alloc`表示**是否**允许在路径缺失时**自动分配中间页表**，若查找成功则返回对应的`pte`, 失败返回NULL。
-
-  首先，通过与`mem/type.h`中定义的`VA_MAX`相比较检查虚拟地址的合法性
+  首先，通过与`mem/type.h`中定义的`VA_MAX`相比较检查**虚拟地址的合法性**：
 
   ```c
-  if (va >= VA_MAX)
-      return NULL;
+if (va >= VA_MAX)
+    return NULL;
   ```
 
-  然后，利用`VA_TO_VPN`来逐个提取当前层级的**虚拟页号**，并结合当前**页表**获取当前层级的**PTE**。
-
-  ```c
-   int idx = VA_TO_VPN(va, level);   // 获取当前层级虚拟页号
-   pte_t *pte = &curr[idx];          // 当前层级的 PTE
-  ```
-
-  接着，进行逐层遍历，遍历**中间层**时先检查**获取的PTE是否有效**，：
+然后，利用`VA_TO_VPN`来逐个提取当前层级的**虚拟页号**，并结合当前**页表**获取当前层级的**PTE**。接着，进行逐层遍历，遍历**中间层**时先检查**获取的PTE是否有效**，：
 
   - PTE有效时，利用`PTE_CHECK`检查是否符合中间节点的要求（R/W/X均为0），若符合要求，则**利用`PTE_TO_PA`讲当前层PTE设为下一级的页表首地址**
   - PTE无效：根据`alloc`参数判断是否需要自动分配中间页，若不允许分配，直接返回失败NULL；若允许分配，则利用`pmem_alloc(true)`分配新一页作为下一页的页表，并利用`PA_TO_PTE`设置 PTE 指向新页表。
 
-  遍历中间层的具体代码如下：
+  遍历到`level=0`时直接返回当前PTE：
 
   ```c
-  // level=2 和 level=1（中间层）
-      if (*pte & PTE_V) {               // PTE 有效
-          if (PTE_CHECK(*pte)) {        // 检查是否符合中间节点的要求（R/W/X=0）
-              uint64 child_pa = PTE_TO_PA(*pte);
-              curr = (pgtbl_t)child_pa; 
-          } else {
-              return NULL; // 非法，直接返回NULL
-          }
-      } else {                          // PTE 无效
-          // 若alloc不允许分配
-          if (!alloc)                   
-              return NULL;
-  		// 若alloc允许分配
-          void *pa = pmem_alloc(true);  // 分配一页作为下一级页表
-          if (!pa) return NULL;
-          memset(pa, 0, PGSIZE);        // 清零
-  
-          uint64 child_ppn = PA_TO_PTE((uint64)pa);
-          *pte = child_ppn | PTE_V;     // 设置 PTE 指向新页表
-  
-          curr = (pgtbl_t)pa;           // 更新当前页表为新分配的
-      }
-  }
-  ```
-
-  遍历到`level=0`时直接返回当前PTE，对应代码如下：
-
-  ```c
-  int idx = VA_TO_VPN(va, 0);
-  return &curr[idx]; //直接返回当前PTE
+int idx = VA_TO_VPN(va, 0);
+return &curr[idx]; //直接返回当前PTE
   ```
 
   #### 2.1.2 `vm_mappages`函数
@@ -345,80 +303,33 @@ cpu 0 test over
   具体实现上，首先，要进行**参数检查**，主要检查三点：`len`（长度）必须大于 0；`va` 和 `pa` 必须页对齐；`va+len`后不能越界。
 
   ```c
-  // 1. 长度必须大于 0
-  if (len == 0) 
-      panic("vm_mappages: len is zero");
-  
-  // 2. va 和 pa 必须页对齐
-  if (va % PGSIZE != 0 || pa % PGSIZE != 0) 
-      panic("vm_mappages: va or pa not page-aligned");
-  
-  // 3. 不能越界
-  if (va + len > VA_MAX) 
-      panic("vm_mappages: virtual address overflow");
+if (len == 0) panic("vm_mappages: len is zero");// 1. 长度必须大于 0
+if (va % PGSIZE != 0 || pa % PGSIZE != 0) panic("vm_mappages: va or pa not page-aligned");// 2. va 和 pa 必须页对齐
+if (va + len > VA_MAX) panic("vm_mappages: virtual address overflow");3. 不能越界
   ```
 
-  接着，进行**逐页映射**（已`PGSIZE`整页为单位进行逐页映射），建立映射的本质是**找到`va`在页表对应位置的`pte`并修改它**，找到对应PTE指针的过程需要需要用到我们刚刚前面实现的`vm_getpte`函数（`alloc`参数设为true，表示如果路径不存在，自动创建中间页表），修改PTE的就相当于给对应的`pte`设置正确的**物理页号**（PPN），**权限**（perm）和**有效位**（V=1）
+  接着，进行**逐页映射**（已`PGSIZE`整页为单位进行逐页映射），建立映射的本质是**找到`va`在页表对应位置的`pte`并修改它**，找到对应PTE指针的过程需要需要用到我们刚刚前面实现的`vm_getpte`函数（`alloc`参数设为true，表示如果路径不存在，自动创建中间页表），修改PTE的就相当于给对应的`pte`设置正确的**物理页号**（PPN），**权限**（perm）和**有效位**（V=1），核心代码：
 
   ```c
-  //逐页映射
-  uint64 end = va + len;  
-  while (va < end) {
-      // Step 1: 获取当前虚拟地址对应的 PTE 指针
-      pte_t *pte = vm_getpte(pgtbl, va, true);
-      if (!pte) panic("vm_mappages: cannot create PTE (out of memory?)");
-  
-      // Step 2: 修改 PTE
-      uint64 pte_flags = PA_TO_PTE(pa) | perm | PTE_V;
-      *pte = pte_flags;
-  
-      // Step 3: 前进到下一页
-      va += PGSIZE;
-      pa += PGSIZE;
-  }
+pte_t *pte = vm_getpte(pgtbl, va, true); //获取当前虚拟地址对应的 PTE 指针
+*pte = PA_TO_PTE(pa) | perm | PTE_V;//修改 PTE
   ```
 
   #### 2.1.3 `vm_unmappages`函数
 
-  这个函数的作用和上一个`vm_mappages`函数相对，实现方法也类似，是用来在页表 `pgtbl` 中**解除虚拟地址区间 `[va, va + len)` 的映射并释放资源**的函数，参数`freeit`表示**是否释放对应的物理资源**，如果`freeit` = true则释放对应物理页（因为题目中说**默认释放的是用户的物理页**，所以使用`pmem_free(pa, false)`释放物理页的时候第二个参数**可以这样直接写为`false`，不用再判断`pa`到底属于哪个区域**了，之前刚开始写的时候还有点拿不准）。
+  这个函数的作用和上一个`vm_mappages`函数相对，用来在页表 `pgtbl` 中**解除虚拟地址区间 `[va, va + len)` 的映射并释放资源**的函数，参数`freeit`表示**是否释放对应的物理资源**，如果`freeit` = true则释放对应物理页（因为题目中说**默认释放的是用户的物理页**，所以使用`pmem_free(pa, false)`释放物理页的时候第二个参数**可以这样直接写为`false`，不用再判断`pa`到底属于哪个区域**了，之前刚开始写的时候还有点拿不准）。
 
-  具体实现上，首先，与`vm_mappages`函数一样，先进行**参数检查**
+  具体实现上，首先，与`vm_mappages`函数一样，先进行**参数检查**。
 
-  ```c
-  // 1. 长度必须大于 0
-  if (len == 0) {
-      panic("vm_unmappages: len is zero");    
-  // 2. va 必须页对齐
-  } else if (va % PGSIZE != 0) {
-      panic("vm_unmappages: va not page-aligned");
-  // 3. 不能越界
-  } else if (va + len > VA_MAX) {
-      panic("vm_unmappages: virtual address overflow");   
-  }
-  ```
-
-  然后，**逐页解除映射**，先**获取当前虚拟地址对应的 PTE 指针**，同样是调用已实现的`vm_getpte`函数，但和`vm_mappages`中不同的是`alloc`参数应设为`false`，表示不允许自动创建中间页表)。然后**将该PTE标记为无效**；如果需要（即`freeit`参数为`true`），还要**释放对应的物理页**（默认是用户的物理页）。
+  然后，**逐页解除映射**，先**获取当前虚拟地址对应的 PTE 指针**，同样是调用已实现的`vm_getpte`函数，但和`vm_mappages`中不同的是`alloc`参数应设为`false`，表示不允许自动创建中间页表)。然后**将该PTE标记为无效**；如果需要（即`freeit`参数为`true`），还要**释放对应的物理页**（默认是用户的物理页）。核心代码：
 
   ```c
-  //逐页解除映射
-  uint64 end = va + len; 
-  while (va < end) {
-      // Step 1: 获取当前虚拟地址对应的 PTE 指针
-      pte_t *pte = vm_getpte(pgtbl, va, false);
-      if (!pte || !(*pte & PTE_V)) panic("vm_unmappages: unmap a not mapped page");
-  
-      // Step 2: 如果需要，释放对应的物理页
-      if (freeit) {
-          uint64 pa = PTE_TO_PA(*pte);
-          pmem_free(pa, false);// 释放 默认是用户的物理页
-      }
-  
-      // Step 3: 将 PTE 标记为无效（解除映射）
-      *pte = 0;
-  
-      // Step 4: 前进到下一页
-      va += PGSIZE;
-  }
+pte_t *pte = vm_getpte(pgtbl, va, false);//获取当前虚拟地址对应的 PTE 指针
+if (freeit) {// 如果需要，释放对应的物理页
+  uint64 pa = PTE_TO_PA(*pte);
+  pmem_free(pa, false);// 释放（默认是用户的物理页）
+}
+*pte = 0;//3将 PTE 标记为无效（解除映射）
   ```
 
   ### 2.2 设置内核页表映射并启用
@@ -429,53 +340,37 @@ cpu 0 test over
 
   该函数的作用是完成UART、CLINT、PLIC、内核代码区、内核数据区、可分配区域的页表映射。
 
-  具体实现上，首先，**分配根页表**（即第2级页表）。从内核区域分配一页并将该页清零
-
-  ```c
-  kernel_pgtbl = (pgtbl_t)pmem_alloc(true);  // 从内核区域分配一页
-  if (!kernel_pgtbl) panic("kvm_init: cannot allocate root page table");
-  memset(kernel_pgtbl, 0, PGSIZE);  // 清零
-  ```
+  具体实现上，首先，**分配根页表**（即第2级页表）。从内核区域**分配一页**并**将该页清零**。
 
   然后，**映射内核代码和数据区**。首先获取内核代码和数据的范围，然后利用上面写的`vm_mappages`函数建立映射，为恒等映射（`pa`=`va`）
 
+```c
+// 映射到内核代码和数据区
+vm_mappages(kernel_pgtbl,text_start,text_start,map_size,PTE_R | PTE_W | PTE_X);//va=pa
+```
+
+  接着，对`UART/CLINT/PLIC`等设备的寄存器进行映射，同样是利用上面写的`vm_mappages`函数建立恒等映射。本来以为源码中没有设定这些设备的物理地址，还手动利用宏定义自行进行了自认为合理的设置，后来**在`trap/type.h`中发现了CLIENT和PLIC的物理地址定义，在`lib/type.h`中发现了UART设备的物理地址**，如下所示：
+
   ```c
-  // 获取内核代码和数据的范围
-  uint64 text_start = KERNEL_BASE; //代码段开始的位置          
-  uint64 data_end   = (uint64)ALLOC_BEGIN;  // 数据段结束位置
-  uint64 size = data_end - text_start; //长度
-  uint64 map_size = (size + PGSIZE - 1) & ~(PGSIZE - 1);//对齐为整页
-  
-  // 映射到内核代码和数据区
-  vm_mappages(kernel_pgtbl,text_start,text_start,map_size,PTE_R | PTE_W | PTE_X);//va=pa
+//lib/type.h中UART的物理基地址
+#define CLINT_BASE 0x2000000ul
+//trap/type.h中的CLIENT和PLIC物理基地址
+#define CLINT_BASE 0x2000000ul
+#define PLIC_BASE 0x0c000000ul
   ```
 
-  接着，对`UART/CLINT/PLIC`等设备的寄存器进行映射，同样是利用上面写的`vm_mappages`函数建立恒等映射。本来以为源码中没有设定这些设备的物理地址，还手动利用宏定义自行进行了自认为合理的设置，后来**在`trap/type.h`中发现了CLIENT和PLIC的物理地址定义，在`lib/type.h`中发现了UART设备的物理地址**
+  由于kvm.c的头文件`#include 'mod.h'`包含了这些type.h文件，所以在kvm.c中直接使用这些基地址进行映射即可：
 
   ```c
-  //lib/type.h中UART的物理基地址
-  #define CLINT_BASE 0x2000000ul
-  //trap/type.h中的CLIENT和PLIC物理基地址
-  #define CLINT_BASE 0x2000000ul
-  #define PLIC_BASE 0x0c000000ul
+vm_mappages(kernel_pgtbl,UART_ADDR,UART_ADDR,PGSIZE,PTE_R | PTE_W);  // UART
+vm_mappages(kernel_pgtbl,CLINT_ADDR,CLINT_ADDR,0x10000,PTE_R | PTE_W); // CLINT
+vm_mappages(kernel_pgtbl,PLIC_ADDR,PLIC_ADDR,0x4000000,PTE_R | PTE_W); // PLIC
   ```
 
-  由于kvm.c的头文件`#include 'mod.h'`包含了这些type.h文件，所以在kvm.c中直接使用这些基地址进行映射即可
+  最后，**映射可用内存区域**` [ALLOC_BEGIN, ALLOC_END)`，为了**防止未来成为攻击者注入代码的目标**，设定为不可执行（X=0）：
 
   ```c
-  vm_mappages(kernel_pgtbl,UART_ADDR,UART_ADDR,PGSIZE,PTE_R | PTE_W);  // UART
-  vm_mappages(kernel_pgtbl,CLINT_ADDR,CLINT_ADDR,0x10000,PTE_R | PTE_W); // CLINT
-  vm_mappages(kernel_pgtbl,PLIC_ADDR,PLIC_ADDR,0x4000000,PTE_R | PTE_W); // PLIC
-  ```
-
-  最后，**映射可用内存区域**` [ALLOC_BEGIN, ALLOC_END)`，为了**防止未来成为攻击者注入代码的目标**，设定为不可执行（X=0）。
-
-  ```c
-  uint64 phy_pool_begin = (uint64)ALLOC_BEGIN;
-  uint64 phy_pool_end   = (uint64)ALLOC_END;
-  uint64 phy_pool_sz    = phy_pool_end - phy_pool_begin;
-  
-  vm_mappages(kernel_pgtbl,phy_pool_begin,phy_pool_begin,phy_pool_sz,PTE_R | PTE_W);  // 不可执行
+vm_mappages(kernel_pgtbl,phy_pool_begin,phy_pool_begin,phy_pool_sz,PTE_R | PTE_W);  // 不可执行
   ```
 
   #### 2.2.2 `kvm_inithart`函数
@@ -488,6 +383,7 @@ cpu 0 test over
   - 刷新TLB缓存
 
   调用了这个函数后，就**启用了内核页表**，也**就是可以开始使用虚拟地址**了！
+
 
 ### 2.3 测试用例
 
