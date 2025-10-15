@@ -45,17 +45,27 @@ static timer_t sys_timer;
 // 时钟创建
 void timer_create()
 {
-
+    // 初始化sys_timer
+    sys_timer.ticks = 0;
+    spinlock_init(&sys_timer.lk, "sys_timer");
 }
 
 // 时钟更新
 void timer_update()
 {
-
+    // ticks++ (保证原子性)
+    spinlock_acquire(&sys_timer.lk);
+    sys_timer.ticks++;
+    spinlock_release(&sys_timer.lk);
 }
 
 // 获取滴答数量 (不把sys_timer暴露出去, 只提供安全的访问接口)
 uint64 timer_get_ticks()
 {
-
+    // 返回ticks
+    uint64 ticks;
+    spinlock_acquire(&sys_timer.lk);
+    ticks = sys_timer.ticks;
+    spinlock_release(&sys_timer.lk);
+    return ticks;
 }
