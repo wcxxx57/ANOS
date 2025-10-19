@@ -4,6 +4,41 @@
 __attribute__((aligned(16))) uint8 CPU_stack[4096 * NCPU];
 
 extern void main();
+extern void timer_vector();  // M-mode时钟中断处理程序，在trap.S中定义
+extern void kernel_vector(); // S-mode陷阱处理程序，在trap.S中定义
+extern uint64 INTERVAL; //在trap/type.h中定义
+extern uint64 CLINT_MTIMECMP(int hartid); //在trap/type.h中定义
+
+struct mscratch_area {
+    uint64 a1_saved;
+    uint64 a2_saved;
+    uint64 a3_saved;
+    uint64 mtimecmp_addr;
+    uint64 interval;
+} scratch_areas[NCPU];// 每个CPU的mscratch保存区域
+
+// 时钟中断初始化函数
+void clockinit() {
+    int id = r_mhartid();
+    // 1. 为当前CPU分配并初始化mscratch保存区域
+    struct mscratch_area *area = &scratch_areas[id];
+    area->mtimecmp_addr = CLINT_MTIMECMP(id);
+    area->interval = INTERVAL;
+
+    // 2. 设置 mscratch寄存器 指向保存区域
+    w_mscratch((uint64)area);
+    
+    // 3. 设置 M-mode 陷阱向量为时钟中断处理程序
+    w_mtvec((uint64)timer_vector);
+    
+    // 4. 设置第一次时钟中断时间
+    uint64 now = r_time();//在arch/method.h中定义
+    uint64 *mtimecmp = (uint64*)CLINT_MTIMECMP(id); //每个cpu核的比较寄存器
+    *mtimecmp = now + INTERVAL;
+    
+    // 5. 开启 M-mode 时钟中断
+    w_mie(r_mie() | MIE_MTIE);  // MIE_MTIE = (1 << 7)
+}
 
 void start()
 {
@@ -17,10 +52,14 @@ void start()
     w_tp(id);
 
     // 委托S-mode处理所有trap
+    w_stvec((uint64)kernel_vector);//!s-mode陷阱向量的位置
+    w_medeleg(0xffff);//委托中断
+    w_mideleg(0xffff);//委托异常
+    w_sie(r_sie() | SIE_SEIE | SIE_STIE | SIE_SSIE);//s-mode开启中断
 
 
     // 时钟中断初始化 (唯一需要在M-mode处理的中断)
-
+    clockinit();
 
     // 修改mstatus寄存器，假装上一个状态是S-mode
     uint64 status = r_mstatus();
