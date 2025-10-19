@@ -83,11 +83,7 @@ void pmem_free(uint64 page, bool in_kernel)
     // 将它插入空闲链表的表头
 
     // 分配区域：内核区域 or 用户区域
-    alloc_region_t *ar = &user_region;
-    if (in_kernel)
-    {
-        ar = &kern_region;
-    }
+    alloc_region_t *ar = in_kernel ? &kern_region : &user_region;
 
     // 检查page的合法性
     if (page % PGSIZE != 0 || page < ar->begin || page >= ar->end)
@@ -95,12 +91,21 @@ void pmem_free(uint64 page, bool in_kernel)
         panic("pmem_free: invalid page");
     }
 
+    spinlock_acquire(&ar->lk);
+
+    // 扫描空闲链表，检查是否重复释放
+    for (page_node_t *cur = ar->list_head.next; cur; cur = cur->next) {
+        if ((uint64)cur == page) {
+            spinlock_release(&ar->lk);
+            panic("pmem_free: double free detected");
+        }
+    }
+
     // 调试用：填充为垃圾值
     memset((void *)page, 1, PGSIZE);
 
     // 插入到空闲链表的表头
     page_node_t *p = (page_node_t *)page;
-    spinlock_acquire(&ar->lk);
     p->next = ar->list_head.next;
     ar->list_head.next = p;
     ar->allocable++;
