@@ -11,8 +11,8 @@ int main()
     trap_kernel_init();
     trap_kernel_inithart();
 
-    // // 创建系统时钟
-    // timer_create();
+    // 创建系统时钟
+    timer_create();
 
     plic_init(); // 初始化 PLIC
     uart_init();
@@ -23,30 +23,42 @@ int main()
 
     int cpuid = mycpuid();
     if (cpuid == 0) {
+        print_init();
         printf("CPU %d is booting!\n", cpuid);
         __sync_synchronize();
         started = 1;
-
-        while (1) {
-            asm volatile("wfi");  // 等待中断
-        }
     } else {
         while (started == 0);
         __sync_synchronize();
         printf("CPU %d is booting!\n", cpuid);
-
-        while (1) {
-            asm volatile("wfi");  // 等待中断
-        }
     }
-   
-    // // 滴答测试
-    // uint64 last = (uint64)-1;
-    // while (1) {
-    //     uint64 t = timer_get_ticks();
-    //     if (t != last) {
-    //         last = t;
-    //         printf("cpu %d:di da\n", cpuid);
+
+    // int cpuid = mycpuid();
+    // if (cpuid == 0) {
+    //     printf("CPU %d is booting!\n", cpuid);
+    //     __sync_synchronize();
+    //     started = 1;
+
+    //     while (1) {
+    //         asm volatile("wfi");  // 等待中断
+    //     }
+    // } else {
+    //     while (started == 0);
+    //     __sync_synchronize();
+    //     printf("CPU %d is booting!\n", cpuid);
+
+    //     while (1) {
+    //         asm volatile("wfi");  // 等待中断
     //     }
     // }
+   
+    // // 滴答测试
+    uint64 last = (uint64)-1;
+    while (1) {
+        uint64 t = timer_get_ticks();
+        if (t != last) {
+            last = t;
+            printf("cpu %d:di da\n", cpuid);
+        }
+    }
 }
