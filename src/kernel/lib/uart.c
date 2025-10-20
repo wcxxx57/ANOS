@@ -24,8 +24,9 @@ void uart_init(void)
 	// 清零和使能FIFO模式
 	WriteReg(FCR, FCR_FIFO_ENABLE | FCR_FIFO_CLEAR);
 
-	// 使能输出队列和接收队列的中断
-	WriteReg(IER, IER_TX_ENABLE | IER_RX_ENABLE);
+	//WriteReg(FCR, FCR_FIFO_ENABLE | FCR_FIFO_CLEAR);
+	// 使能仅接收队列的中断（不要使能 THR 空中断，避免不断触发）
+	WriteReg(IER, IER_RX_ENABLE);
 }
 
 // 单个字符输出
@@ -48,7 +49,7 @@ void uart_putc_sync(int c)
 	// 开启中断
 	pop_off();
 }
-
+	
 // 单个字符输入
 // 失败返回-1
 int uart_getc_sync(void)
@@ -62,11 +63,20 @@ int uart_getc_sync(void)
 // 中断处理(键盘输入->屏幕输出)
 void uart_intr(void)
 {
-	while (1)
-	{
-		int c = uart_getc_sync();
-		if (c == -1)
-		break;
-		uart_putc_sync(c);
-	}
+    // 某些平台/模拟器下 IIR 可能显示无挂起，但 LSR 上仍有可读数据。
+    // 因此以 LSR 的 RX_READY 为准，循环读取所有可用字符并处理回显。
+    while (ReadReg(LSR) & LSR_RX_READY) {
+        int c = ReadReg(RHR);
+
+        if (c == '\r' || c == '\n') {
+            uart_putc_sync('\r');
+            uart_putc_sync('\n');
+        } else if (c == '\b' || c == 127) {
+            uart_putc_sync('\b');
+            uart_putc_sync(' ');
+            uart_putc_sync('\b');
+        } else {
+            uart_putc_sync(c);
+        }
+    }
 }
