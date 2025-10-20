@@ -29,40 +29,39 @@ int main()
 
 
     // 串口输入测试
-    int cpuid = mycpuid();
-    if (cpuid == 0) {
-        printf("CPU %d is booting!\n", cpuid);
-        __sync_synchronize(); // 防止指令重排
-        started = 1;
-
-        while (1) {
-            asm volatile("wfi");  // 等待中断
-        }
-    } else {
-        while (started == 0);
-        __sync_synchronize();
-        printf("CPU %d is booting!\n", cpuid);
-
-        while (1) {
-            asm volatile("wfi");  // 等待中断
-        }
-    }
-   
-
-    
     // int cpuid = mycpuid();
     // if (cpuid == 0) {
-    //     print_init();
     //     printf("CPU %d is booting!\n", cpuid);
-    //     __sync_synchronize();
+    //     __sync_synchronize(); // 防止指令重排
     //     started = 1;
+
+    //     while (1) {
+    //         asm volatile("wfi");  // 等待中断
+    //     }
     // } else {
     //     while (started == 0);
     //     __sync_synchronize();
     //     printf("CPU %d is booting!\n", cpuid);
-    // }
 
-    // //  滴答测试
+    //     while (1) {
+    //         asm volatile("wfi");  // 等待中断
+    //     }
+    // }
+   
+
+    int cpuid = mycpuid();
+    if (cpuid == 0) {
+        print_init();
+        printf("CPU %d is booting!\n", cpuid);
+        __sync_synchronize();
+        started = 1;
+    } else {
+        while (started == 0);
+        __sync_synchronize();
+        printf("CPU %d is booting!\n", cpuid);
+    }
+
+    // 时钟滴答测试
     // uint64 last = (uint64)-1;
     // while (1) {
     //     uint64 t = timer_get_ticks();
@@ -71,4 +70,17 @@ int main()
     //         printf("cpu %d:di da\n", cpuid);
     //     }
     // }
+
+    // 时钟快慢测试
+    uint64 last = (uint64)-1;
+    while (1) {
+        if (cpuid == 0) {                 // 只在 CPU0 打印，避免多核重复输出
+            uint64 t = timer_get_ticks();
+            if (t != last) {
+                last = t;
+                printf("ticks = %d\n", (int)t);
+            }
+        }
+        asm volatile("wfi");              // 等待中断，降低忙等
+    }
 }
