@@ -10,7 +10,7 @@
 
 ## 代码组织结构
 ```
-ECNU-OSLAB-2025-TASK
+ANOS
 ├── LICENSE        开源协议
 ├── .vscode        配置了可视化调试环境
 ├── registers.xml  配置了可视化调试环境
@@ -18,7 +18,7 @@ ECNU-OSLAB-2025-TASK
 ├── Makefile       编译运行整个项目
 ├── kernel.ld      定义了内核程序在链接时的布局
 ├── pictures       README使用的图片目录 (CHANGE, 日常更新)
-├── README.md      实验指导书 (CHANGE, 日常更新)
+├── README.md      实验报告 (CHANGE, 日常更新)
 └── src            源码
     └── kernel     内核源码
         ├── arch   RISC-V相关
