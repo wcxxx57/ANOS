@@ -87,6 +87,15 @@ void trap_kernel_handler()
         // 1-中断处理
         switch (trap_id) // 中断产生原因分类
         {
+        case 1: // S-mode软件中断
+            //! 本实验目前还为涉及调度的内容
+            break;
+        case 5: // S-mode时钟中断
+            timer_interrupt_handler();
+            break;
+        case 9: // S-mode外设中断
+            external_interrupt_handler();
+            break;
 
         default: // 例外处理
             printf("\nunexpected interrupt: %s\n", interrupt_info[trap_id]);
@@ -97,6 +106,7 @@ void trap_kernel_handler()
         // 2-异常处理
         switch (trap_id) // 异常产生原因分类
         {
+            //! 本实验目前还未涉及异常处理的内容
 
         default: // 例外处理
             printf("\nunexpected exception: %s\n", exception_info[trap_id]);
@@ -109,7 +119,27 @@ void trap_kernel_handler()
 // 外设中断处理 (基于PLIC，lab-3只需要识别和处理UART中断)
 void external_interrupt_handler()
 {
+    // 获取中断号
+    int irq = plic_claim();
 
+    //printf("[DEBUG] PLIC claim: irq=%d\n", irq);  // 重要：查看是否得到中断
+    
+    // 根据中断号进行处理
+    switch (irq){
+        case 0:
+            // 没有中断
+            break;
+        case UART_IRQ:// UART输入中断的中断号 定义在lib/type.h中
+            //printf("[DEBUG] UART interrupt! Calling uart_intr()\n");    
+            uart_intr();
+            //printf("[DEBUG] uart_intr() returned\n");
+            break;
+        default:
+            printf("\nunexpected external interrupt irq=%d\n", irq);// 其他中断暂时不处理
+            break;
+    }
+    plic_complete(irq);
+    //printf("[DEBUG] PLIC complete for irq=%d\n", irq);
 }
 
 // 时钟中断处理 (基于CLINT)
