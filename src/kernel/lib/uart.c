@@ -24,9 +24,9 @@ void uart_init(void)
 	// 清零和使能FIFO模式
 	WriteReg(FCR, FCR_FIFO_ENABLE | FCR_FIFO_CLEAR);
 
-	//WriteReg(FCR, FCR_FIFO_ENABLE | FCR_FIFO_CLEAR);
-	// 使能仅接收队列的中断（不要使能 THR 空中断，避免不断触发）
-	WriteReg(IER, IER_RX_ENABLE);
+	//! 使能仅接收队列的中断（不要使能 THR 空中断，避免不断触发）
+	//WriteReg(IER, IER_RX_ENABLE);
+	WriteReg(IER, IER_RX_ENABLE | IER_TX_ENABLE);
 }
 
 // 单个字符输出
@@ -68,10 +68,10 @@ void uart_intr(void)
     while (ReadReg(LSR) & LSR_RX_READY) {
         int c = ReadReg(RHR);
 
-        if (c == '\r' || c == '\n') {
+        if (c == '\r' || c == '\n') { // 处理换行
             uart_putc_sync('\r');
             uart_putc_sync('\n');
-        } else if (c == '\b' || c == 127) {
+        } else if (c == '\b' || c == 127) { // 处理backspace
             uart_putc_sync('\b');
             uart_putc_sync(' ');
             uart_putc_sync('\b');

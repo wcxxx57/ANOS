@@ -71,6 +71,7 @@ void trap_kernel_inithart()
 // 内核态trap处理的核心逻辑
 void trap_kernel_handler()
 {
+    //printf("[IRQ] Entering trap_kernel_handler!\n");
     uint64 sepc = r_sepc();       // 记录了发生异常时的PC值
     uint64 sstatus = r_sstatus(); // 与特权模式和中断相关的状态信息
     uint64 scause = r_scause();   // 引发trap的原因
@@ -88,12 +89,17 @@ void trap_kernel_handler()
         switch (trap_id) // 中断产生原因分类
         {
         case 1: // S-mode软件中断
+            //printf("[IRQ] S-mode software interrupt received!\n");
+            // 🔥 必须清除 SSIP，否则会无限中断
+            w_sip(r_sip() & ~2);  // 清除 SSIP bit
             //! 本实验目前还为涉及调度的内容
             break;
         case 5: // S-mode时钟中断
+            //printf("[IRQ] S-mode timer interrupt received!\n");
             timer_interrupt_handler();
             break;
         case 9: // S-mode外设中断
+            //printf("[IRQ] S-mode external interrupt received!\n");
             external_interrupt_handler();
             break;
 
@@ -119,6 +125,7 @@ void trap_kernel_handler()
 // 外设中断处理 (基于PLIC，lab-3只需要识别和处理UART中断)
 void external_interrupt_handler()
 {
+    //printf("[IRQ] Entering external_interrupt_handler!\n");
     // 获取中断号
     int irq = plic_claim();
 
