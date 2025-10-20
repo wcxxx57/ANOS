@@ -58,6 +58,13 @@ ANOS
         └── main.c (本实验完成, 更多的初始化)
 ```
 
+相比于上一个实验，本次实验主要增加了以下功能：
+？（之后修改）
+支持时钟中断，实现系统定时与“心跳”机制。
+支持串口中断，实现外设输入的中断驱动。
+新增 PLIC（平台级中断控制器）相关代码，使操作系统能够响应 UART 外设中断。
+完善了 S-mode/M-mode 的中断异常处理流程，统一汇编入口和 C 语言分发。
+
 
 ## 测试用例
 
@@ -69,3 +76,19 @@ ANOS
 
 # 修复方法
 在trap/mod.h中添加对lock/mod.h的引用
+
+### 时钟滴答测试
+
+一开始将`timer_interrupt_enable()`函数放在了`trap_kernel_handler()`函数中`switch`语句的`S-mode timer interrupt`分支内，导致并没有正确启用时钟中断。将其移到`S-mode software interrupt`后，就成功触发了时钟中断。
+
+这是因为查看`trap.S`文件可以发现：M-mode中断通过设置SSIP触发的是S-mode的软件中断，而不是S-mode的时钟中断。因此，需要在处理S-mode软件中断中调用`timer_interrupt_handler()`，其内部会调用`timer_update()` 并清SSIP，这样才能正确启用时钟中断。
+
+![dida1](pictures/dida1.png)
+
+成功通过时钟滴答测试！
+
+### 时钟快慢测试
+
+通过修改`type.h`中`INTERVAL`的值，具体我尝试了原始的1000000(100ms)以及修改后的100000(10ms)和10000000(1s)，直观感受到了时钟滴答的快慢变化。
+
+![dida2](pictures/dida2.png)

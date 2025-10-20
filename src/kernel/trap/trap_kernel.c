@@ -90,11 +90,9 @@ void trap_kernel_handler()
         {
         case 1: // S-mode软件中断
             //printf("[IRQ] S-mode software interrupt received!\n");
-            // 🔥 必须清除 SSIP，否则会无限中断
-            w_sip(r_sip() & ~2);  // 清除 SSIP bit
-            //! 本实验目前还为涉及调度的内容
+            timer_interrupt_handler();
             break;
-        case 5: // S-mode时钟中断
+        case 7: // S-mode时钟中断
             //printf("[IRQ] S-mode timer interrupt received!\n");
             timer_interrupt_handler();
             break;
