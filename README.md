@@ -125,7 +125,7 @@ if (scause & 0x8000000000000000ul) {
 
 在`external_interrupt_handler()`中，基于PLIC，先通过`plic_claim()`**获取中断号**，再通过一个`switch-case`来根据中断号**识别并处理中断**，然后通过`plic_complete(irq)`确认**完成该中断**。
 
-串口中断的中断号定义在`lib/type.h`中，其余中断本实验未涉及，中断号为0代表没用外设中断。对应代码逻辑如下：
+串口中断的中断号定义在`lib/type.h`中，其余中断本实验未涉及，中断号为0代表没有外设中断。对应代码逻辑如下：
 
 ```c
 int irq = plic_claim();//获取中断号
@@ -166,28 +166,7 @@ plic_complete(irq);//完成中断
 2.  **M-mode中断入口 (`trap.S`中的`timer_vector`)**：当硬件时钟中断发生，CPU跳转至此。它负责更新下一次中断时间，并通过触发一个**S-mode软件中断**，将控制权“委托”给S-mode的内核。
 3.  **S-mode中断处理 (`timer_interrupt_handler()`)**：在`trap_kernel.c`中，S-mode软件中断会调用此函数。它的核心工作就是调用我们自己实现的 `timer_update()` 来更新系统`ticks`，并清除S-mode软件中断挂起位（SSIP），宣告中断处理完成。
 
-通过以上机制，系统实现了**M-mode与S-mode的协作处理时钟中断**，完整的流程如下图所示：
-
-```mermaid
-flowchart TD
-    A[S-mode正常执行流] -->|时钟中断发生| B[M-mode trap: 
-    进入timer_vector]
-    B --> C[更新MTIMECMP，
-    预约下一次中断]
-    C --> D[设置SSIP，
-    触发S-mode软件中断]
-    D --> E[mret尝试返回S-mode]
-    E -->|硬件检测到SSIP=1| F[S-mode trap: 
-    进入kernel_vector]
-    F --> G[trap_kernel_handler:
-    timer_interrupt_handler]
-    G --> H[清除SSIP，
-    宣告中断处理完毕]
-    H --> I[sret返回M-mode]
-    I --> J[M-mode：
-    timer_vector继续执行]
-    J --> K[mret最终返回S-mode正常执行流]
-```
+通过以上机制，系统实现了**M-mode与S-mode的协作处理时钟中断**。
 
 ---
 
