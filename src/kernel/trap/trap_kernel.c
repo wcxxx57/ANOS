@@ -91,9 +91,6 @@ void trap_kernel_handler()
             case 1: // S-mode软件中断
                 timer_interrupt_handler();
                 break;
-            case 7: // S-mode时钟中断
-                timer_interrupt_handler();
-                break;
             case 9: // S-mode外设中断
                 external_interrupt_handler();
                 break;

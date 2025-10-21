@@ -146,35 +146,58 @@ plic_complete(irq);//完成中断
 
 串口中断是通过调用`uart_intr()`来处理的，`uart_intr()`函数在uart.c中，本实验对其实现的功能是**能够将输入的字符回显到屏幕上并支持换行和Backspace**。（虽然助教文档里好像没写uart.c是TODO，但是我觉得通过修改uart_intr()来实现最佳）
 
-具体在`uart_intr()`中，使用while循环是为了处理输入多个字符只引发了一次串口中断的情形。处理**换行**时考虑到不同系统按下Enter键后的输入不同，统一同时输出\r\n。通过先左移光标（\b)，再用空格覆盖原先字符，再左移光标的方式来达到了**退格**的效果。
+具体在`uart_intr()`中，使用while循环是为了处理输入多个字符只引发了一次串口中断的情形。处理**换行**时考虑到不同系统按下Enter键后的输入不同，统一同时输出\r\n。通过先左移光标(\b)，再用空格覆盖原先字符，再左移光标的方式来达到了**退格**的效果。
 
 ### 4.timer.c
 
+我们主要实现了对全局时钟`sys_timer`的三个操作函数：
 
+- `timer_create()`：初始化全局时钟的`ticks`与锁
 
+- `timer_update()`：原子的自增`ticks`
 
+- `timer_get_ticks()`：不暴露`sys_timer`的条件下，提供获取`ticks`的接口
 
+在实现完这三个非常简单的函数之后，我们就成功实现时钟中断，这是因为**源码中已经帮我们把时钟中断的复杂框架搭建好了**，我们实现的操作函数只是这个精巧机制中被调用的一小环。
 
+整个时钟中断的运行依赖于以下几个源码提供的关键部分：
+
+1.  **M-mode初始化 (`timer_init()`)**：在系统启动时，该函数在M-mode下完成时钟初始化，包括设置`mtvec`指向`timer_vector`，并预约第一次硬件时钟中断。
+2.  **M-mode中断入口 (`trap.S`中的`timer_vector`)**：当硬件时钟中断发生，CPU跳转至此。它负责更新下一次中断时间，并通过触发一个**S-mode软件中断**，将控制权“委托”给S-mode的内核。
+3.  **S-mode中断处理 (`timer_interrupt_handler()`)**：在`trap_kernel.c`中，S-mode软件中断会调用此函数。它的核心工作就是调用我们自己实现的 `timer_update()` 来更新系统`ticks`，并清除S-mode软件中断挂起位（SSIP），宣告中断处理完成。
+
+通过以上机制，系统实现了**M-mode与S-mode的协作处理时钟中断**，完整的流程如下图所示：
+
+```mermaid
+flowchart TD
+    A[S-mode正常执行流] -->|时钟中断发生| B[M-mode trap: 
+    进入timer_vector]
+    B --> C[更新MTIMECMP，
+    预约下一次中断]
+    C --> D[设置SSIP，
+    触发S-mode软件中断]
+    D --> E[mret尝试返回S-mode]
+    E -->|硬件检测到SSIP=1| F[S-mode trap: 
+    进入kernel_vector]
+    F --> G[trap_kernel_handler:
+    timer_interrupt_handler]
+    G --> H[清除SSIP，
+    宣告中断处理完毕]
+    H --> I[sret返回M-mode]
+    I --> J[M-mode：
+    timer_vector继续执行]
+    J --> K[mret最终返回S-mode正常执行流]
+```
 
 ---
 
-## 测试与修复
-
-### 测试遇到的问题：
-
-![error1](pictures/error1.png)
-
-![error2](pictures/error2.png)
-
-### 修复方法
-
-在trap/mod.h中添加对lock/mod.h的引用
+## 测试用例
 
 #### 1.时钟滴答测试
 
 一开始将`timer_interrupt_enable()`函数放在了`trap_kernel_handler()`函数中`switch`语句的`S-mode timer interrupt`分支内，导致并没有正确启用时钟中断。将其移到`S-mode software interrupt`后，就成功触发了时钟中断。
 
-这是因为查看`trap.S`文件可以发现：M-mode中断通过设置SSIP触发的是S-mode的软件中断，而不是S-mode的时钟中断。因此，需要在处理S-mode软件中断中调用`timer_interrupt_handler()`，其内部会调用`timer_update()` 并清SSIP，这样才能正确启用时钟中断。
+而我再次仔细查看`trap.S`文件后发现：M-mode中断通过设置SSIP触发的**是S-mode的软件中断，而不是S-mode的时钟中断！** 因此，需要将`trap_kernel_handler()`修改为：在处理S-mode软件中断的分支内调用`timer_interrupt_handler()`，其内部会调用`timer_update()` 并清SSIP，这样才能正确启用时钟中断。
 
 ![dida1](pictures/dida1.png)
 
@@ -182,7 +205,7 @@ plic_complete(irq);//完成中断
 
 #### 2.时钟快慢测试
 
-通过修改`type.h`中`INTERVAL`的值，具体我尝试了原始的1000000(100ms)以及修改后的100000(10ms)和10000000(1s)，直观感受到了时钟滴答的快慢变化。
+通过修改`type.h`中`INTERVAL`的值，具体我尝试了原始的 1000000 (100ms) 以及修改后的 10000 (1ms) 和 10000000 (1s)，直观感受到了时钟滴答的快慢变化。
 
 ![dida2](pictures/dida2.png)
 
@@ -194,7 +217,7 @@ plic_complete(irq);//完成中断
 
 原因是**我们原先在`trap_kernel_handler()`函数中没有对case 1（S-mode软件中断）进行任何处理**！系统在通过时钟中断进入S-mode软件中断后没有清除 SSIP bit，导致SSIP 一直为 1，于是CPU 每次返回都会再次触发中断，由此陷入了无限中断循环
 
-后来在case 1中补上了`w_sip(r_sip() & ~2)`这行代码清空SSIP bit，以及再后来在case 1中调用了`timer_interrupt_enable()`(这个函数中写了`w_sip(r_sip() & ~2)`)后，终于成功触发了串口中断！
+后来在case 1中补上了`w_sip(r_sip() & ~2)`这行代码清空SSIP bit,再后来发现只需要在case 1中调用`timer_interrupt_handler()`(这个函数中写了`w_sip(r_sip() & ~2)`)即可，就能成功触发了串口中断！（并且也保证时钟中断可以正常触发！）
 
 ![image-20251021164524057](pictures/uart_success.png)
 
@@ -202,17 +225,46 @@ plic_complete(irq);//完成中断
 
 #### 4. 补充测试
 
+为了进一步验证系统的稳定性，我们设计了**UART与Timer共存性测试**，检验了在时钟中断存在时，串口I/O是否仍然能够正常工作：
 
+```c
+uint64 last = 0, last_print = 0;
+    const uint64 print_every = 50;   // 每 50 个 tick 打一次, 避免刷屏干扰 UART 回显
 
+    while (1) {
+        if (cpuid == 0) {             // 仅 CPU0 打印心跳
+            uint64 t = timer_get_ticks();
+            if (t != last) {          // 只在 tick 变化时处理
+                last = t;
+                if (t - last_print >= print_every) {
+                    last_print = t;
+                    printf("ticks=%d\n", (int)t);
+                }
+            }
+        }
+        asm volatile("wfi");          // 让位给中断 (Timer / UART)
+    }
+```
 
+![test](pictures/test.png)
+
+可以一边看到时钟滴答输出，一边进行串口输入，退格与换行行为均可以正常工作，说明两者可以**良好共存**，成功通过测试！
 
 ---
 
 ## 实验中的问题与思考
 
-#### 1.源码的一个小问题
+#### 1.源码的小问题
 
-在调试`uart.c`中的`uart_intr()`函数时，需要用到在`lib/type.h`中对于LSR寄存器`IER_RX_ENABLE`(接收中断使能位)的宏定义，然后发现助教给的源码中对于IER_RX_ENABLE（接收中断使能位）和IER_TX_ENABLE（空中断使能位）的宏定义好像写反了，进行了修改:relaxed:
+(1) 运行后发现由于trap/mod.h中没有包含一些其他模块的头文件，但使用了其他模块中定义的函数，导致编译报错，截图如下：
+   
+![error1](pictures/error1.png)
+
+![error2](pictures/error2.png)
+
+因此我在`trap/mod.h`中**添加了对`lock/mod.h`的引用**（`lock/mod.h`中除了自旋锁相关的内容，还包含了`lib/mod.h`和`arch/mod.h`），成功解决了编译报错问题。
+
+(2) 在调试`uart.c`中的`uart_intr()`函数时，需要用到在`lib/type.h`中对于LSR寄存器`IER_RX_ENABLE`(接收中断使能位)的宏定义，然后发现助教给的源码中对于IER_RX_ENABLE（接收中断使能位）和IER_TX_ENABLE（空中断使能位）的宏定义好像写反了，进行了修改:relaxed:
 
 ```c
 //lib/type.h 修改前
@@ -231,6 +283,29 @@ plic_complete(irq);//完成中断
 
 #### 3.写OS时一定要“有进有出”
 
-我们在上面串口输入测试时，刚开始就是因为没有调用`w_sip(r_sip() & ~2)`清空SSIP bit结束软件中断，导致系统一直陷入S-mode软件中断而无法执行串口中断。得到的教训是，在写与硬件相关的程序中，**启用某个处理程序后一定要记得在处理完后手动关闭**（或手动进行关闭程序相关的处理）！也就是说，**中断不是处理完后“自动消失”**的，必须主动告诉硬件已经处理完成。
+我们在上面串口输入测试时，刚开始就是因为没有调用`w_sip(r_sip() & ~2)`清空SSIP bit结束软件中断，导致系统一直陷入S-mode软件中断而无法执行串口中断。得到的教训是，在写与硬件相关的程序中，**启用某个处理程序后一定要记得在处理完后手动关闭**（或手动进行关闭程序相关的处理）！也就是说，**中断不是处理完后“自动消失”** 的，必须主动告诉硬件已经处理完成。
 
 在本次实验中借用PLIC能力实现外设中断时也体现了这个原则，在进入外设中断处理函数后通过`plic_claim()`获取中断号并处理完中断后，**一定还要`plic_complete(irq)`确认完成该中断**。在之前实验的自旋锁使用上也是如此，利用`spinlock_acquire(&print_lk)`加锁以后，**还要记得利用`spinlock_release(&print_lk) `解锁**，不然就会“一直被锁在厕所里“​！:stuck_out_tongue_closed_eyes:
+
+#### 4. 对M/S-mode协作处理中断的理解
+
+本次实验的时钟中断实现，让我们深刻理解了RISC-V中**M/S-mode之间的协作模式**。
+
+时钟中断的问题很明确：时钟相关的寄存器（如`MTIME`, `MTIMECMP`）只能在M-mode下访问，但我们的OS内核（需要更新系统`ticks`）运行在S-mode。
+
+为了解决这个**权限隔离**带来的问题，系统采用了一种很巧妙的 **“委托”机制** ：
+
+1.  **M-mode 负责硬件层**：
+   作为最底层的固件层，它的逻辑非常简洁，只做最简单的**硬件操作**：更新下一次中断的时间（写`MTIMECMP`），然后**立即触发一个S-mode软件中断**，不执行任何复杂的OS逻辑。
+
+2.  **S-mode 负责内核逻辑层**：
+   S-mode接受到M-mode触发的软件中断后，执行**内核的trap处理逻辑**，调用我们实现的`timer_update()`来更新系统的`ticks`，最后再清除SSIP位，结束中断处理。
+
+通过这种方式，M-mode扮演了“**硬件代理**”的角色，而S-mode则专注于**执行操作系统的核心逻辑**。
+
+这种设计带来了几个显著的好处：
+
+-   **权限分离**：M-mode掌握最高权限，但其代码量少，逻辑简单，只负责最基础、最可信的硬件操作，从而提高了系统的安全性。
+-   **逻辑解耦**：复杂的OS逻辑（如`ticks`更新）被封装在S-mode，与底层硬件细节解耦，使得内核代码更清晰，更易于维护。
+
+这让我们认识到，操作系统并非一个单一的整体，而是**构建在不同特权级之上、层层协作**的复杂系统。
