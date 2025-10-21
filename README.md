@@ -166,7 +166,7 @@ plic_complete(irq);//完成中断
 2.  **M-mode中断入口 (`trap.S`中的`timer_vector`)**：当硬件时钟中断发生，CPU跳转至此。它负责更新下一次中断时间，并通过触发一个**S-mode软件中断**，将控制权“委托”给S-mode的内核。
 3.  **S-mode中断处理 (`timer_interrupt_handler()`)**：在`trap_kernel.c`中，S-mode软件中断会调用此函数。它的核心工作就是调用我们自己实现的 `timer_update()` 来更新系统`ticks`，并清除S-mode软件中断挂起位（SSIP），宣告中断处理完成。
 
-通过以上机制，系统实现了**M-mode与S-mode的协作处理时钟中断**。
+通过以上机制（完整流程可见前面理解trap.S处的流程图），系统成功实现了**M-mode与S-mode的协作处理时钟中断**！
 
 ---
 
