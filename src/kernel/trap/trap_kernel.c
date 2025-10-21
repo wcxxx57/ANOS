@@ -88,30 +88,26 @@ void trap_kernel_handler()
         // 1-中断处理
         switch (trap_id) // 中断产生原因分类
         {
-        case 1: // S-mode软件中断
-            //printf("[IRQ] S-mode software interrupt received!\n");
-            timer_interrupt_handler();
-            break;
-        case 7: // S-mode时钟中断
-            //printf("[IRQ] S-mode timer interrupt received!\n");
-            timer_interrupt_handler();
-            break;
-        case 9: // S-mode外设中断
-            //printf("[IRQ] S-mode external interrupt received!\n");
-            external_interrupt_handler();
-            break;
+            case 1: // S-mode软件中断
+                timer_interrupt_handler();
+                break;
+            case 7: // S-mode时钟中断
+                timer_interrupt_handler();
+                break;
+            case 9: // S-mode外设中断
+                external_interrupt_handler();
+                break;
 
-        default: // 例外处理
-            printf("\nunexpected interrupt: %s\n", interrupt_info[trap_id]);
-            printf("trap_id = %d, sepc = %p, stval = %p\n", trap_id, sepc, stval);
-            panic("trap_kernel_handler");
+            default: // 例外处理
+                printf("\nunexpected interrupt: %s\n", interrupt_info[trap_id]);
+                printf("trap_id = %d, sepc = %p, stval = %p\n", trap_id, sepc, stval);
+                panic("trap_kernel_handler");
         }
     } else {
         // 2-异常处理
         switch (trap_id) // 异常产生原因分类
         {
             //! 本实验目前还未涉及异常处理的内容
-
         default: // 例外处理
             printf("\nunexpected exception: %s\n", exception_info[trap_id]);
             printf("trap_id = %d, sepc = %p, stval = %p\n", trap_id, sepc, stval);
@@ -123,28 +119,24 @@ void trap_kernel_handler()
 // 外设中断处理 (基于PLIC，lab-3只需要识别和处理UART中断)
 void external_interrupt_handler()
 {
-    //printf("[IRQ] Entering external_interrupt_handler!\n");
     // 获取中断号
     int irq = plic_claim();
-
-    //printf("[DEBUG] PLIC claim: irq=%d\n", irq);  // 重要：查看是否得到中断
     
     // 根据中断号进行处理
     switch (irq){
-        case 0:
-            // 没有中断
+        case 0:// 没有中断
             break;
         case UART_IRQ:// UART输入中断的中断号 定义在lib/type.h中
-            //printf("[DEBUG] UART interrupt! Calling uart_intr()\n");    
+            //uart_putc_sync('U');
             uart_intr();
-            //printf("[DEBUG] uart_intr() returned\n");
             break;
         default:
             printf("\nunexpected external interrupt irq=%d\n", irq);// 其他中断暂时不处理
             break;
     }
+
+    // 告知PLIC中断处理完成
     plic_complete(irq);
-    //printf("[DEBUG] PLIC complete for irq=%d\n", irq);
 }
 
 // 时钟中断处理 (基于CLINT)

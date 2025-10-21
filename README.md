@@ -71,29 +71,78 @@ ANOS
 
 我们对陷阱系统的初步实现**首先从理解trap.S开始**。trap.S中包含陷阱系统处理的核心流程，有`kernel_vector`和`timer_vector`两部分。
 
-在kernel_trap.c中初始化trap核心的时候（`trap_kernel_inithart()`函数）将`kernel_vector`标签写入`stvec`寄存器作为**中断处理晨旭入口地址**（进入s-mode）；类似地，我们在start.c中初始化时钟中断的时候（`clockinit()`函数）也将`timer_vector`标签写入`mtvec`寄存器作为**时钟中断处理程序入口**（进入m-mode）。
+`kernel_vector`是写入`stvec`寄存器的**中断处理晨旭入口地址**（s-mode）；`timer_vector`是写入`mtvec`寄存器的**时钟中断处理程序入口**（m-mode）。
 
-为方便理解，我们将trap.S的执行流程整理为如下图所示：
+为了理解得更清楚，我们将trap.S的执行流程整理为如下图所示：
 
 ![trap.S流程图](pictures/trapS.png)
 
-其中有两点比较重要：
+我们发现其中有几点比较重要：
 
 - 引发s-mode软件中断的`li a1, 2`，`csrw sip, a1`和`w_sip(r_sip() & ~2)`互为逆过程，将SSIP bit置为1后**还要清除SSIP bit**才能彻底结束软件中断，否则会一直持续陷入s-mode软件中断导致系统死机（**原先因为没有意识到这一点，在后面的串口输入测试中de了很久的bug**！！）（**虽然再后来又发现是个不必要的bug**！！！）
-- `mscratch`寄存器指向一个用于**临时保存寄存器状态**的**专用内存区域**，是每个CPU独立的，在后面的start.c中也要用到！
+- 时钟中断是**先进入S-mode软件中断**，从而调用`trap_kernel_handler`来进行陷阱处理的，因此时钟中断时在`trap_kernel_handler`后进入的是`switch-case`的**S-mode软件中断case**，这个在后面写`trap_kernel_handler`时要明确
+- `mscratch`寄存器指向一个用于**临时保存寄存器状态**的**专用内存区域**，是每个CPU独立的，在后面的start.c中也要用到
 
 ### 2.start.c
 
-在start.c中实现了两件事：
+我们在start.c中实现了两件事：
 
-- **委托S-mode处理所有trap**：通过写入`medeleg`和`mideleg`寄存器来分别异常和中断，并使能（enable）三种中断
-- **时钟中断初始化**：首先为当前CPU分配并初始化mscratch保存区域，然后设置 mscratch寄存器指向保存区域，
-
-
+- **委托S-mode处理所有trap**：通过写入`medeleg`和`mideleg`寄存器来分别委托异常和中断，并使能（enable）三种中断（软件/外设/时钟）
+- **时钟中断初始化**：首先为当前CPU分配并初始化mscratch保存区域，然后设置 mscratch寄存器指向该保存区域（即在trap.S理解中提到的每个CPU独立的专用内存区域），随后将`timer_vector`写入mtvec寄存器作为时钟中断处理程序入口，并设置第一次的MTIMECMP比较寄存器的时间，最后使能（enable）M-mode的时钟中断
 
 ### 3.trap_kernel.c
 
+内核态trap处理逻辑的核心代码，我们在这里写的本质上就是**两个`switch-case`**。
 
+在`trap_kernel_handler()`中，通过scause的**标记位**判断是中断还是异常（不过本实验还未涉及异常处理），然后结合`interrupt_info`数组给出的信息判断**中断产生的原因（对应的数字）**。
+
+在前面trap.S的理解中已写到，时钟中断是通过S-mode软件中断进入的trap_kernel.c，所以时钟中断产生的原因属于**S-mode软件中断（case 1）**；串口中断是外设中断的一种，所以属于**S-mode外设中断（case 9）**。具体的`switch-case`代码如下：
+
+```c
+if (scause & 0x8000000000000000ul) {
+    // 1-中断处理
+    switch (trap_id) // 中断产生原因分类
+    {
+        case 1: // S-mode软件中断--时钟中断走这个case
+            timer_interrupt_handler(); break;
+        case 9: // S-mode外设中断--串口中断走这个case
+            external_interrupt_handler(); break;
+        default: // 例外
+            panic("trap_kernel_handler");
+    }
+} else {
+    // 2-异常处理
+    switch (trap_id) // 异常产生原因分类
+    {
+        //本实验目前还未涉及异常处理的内容
+    }
+}
+```
+
+在`external_interrupt_handler()`中，基于PLIC，先通过`plic_claim()`**获取中断号**，再通过一个`switch-case`来根据中断号**识别并处理中断**，然后通过`plic_complete(irq)`确认**完成该中断**。
+
+串口中断的中断号定义在`lib/type.h`中，其余中断本实验未涉及，中断号为0代表没用外设中断。对应代码逻辑如下：
+
+```c
+int irq = plic_claim();//获取中断号
+
+switch (irq){ //识别并处理中断
+    case 0:// 没有中断
+        break;
+    case UART_IRQ:// UART输入中断  
+        uart_intr();
+        break;
+    default: // 其他中断（本实验暂不处理）
+        printf("\nunexpected external interrupt irq=%d\n", irq);
+        break;
+}
+
+plic_complete(irq);//完成中断
+```
+
+串口中断是通过调用`uart_intr()`来处理的，`uart_intr()`函数在uart.c中，本实验对其实现的功能是**能够将输入的字符回显到屏幕上并支持换行和Backspace**。（虽然助教文档里好像没写uart.c是TODO，但是我觉得通过修改uart_intr()来实现最佳）
+
+具体在`uart_intr()`中，使用while循环是为了处理输入多个字符只引发了一次串口中断的情形。处理**换行**时考虑到不同系统按下Enter键后的输入不同，统一同时输出\r\n。通过先左移光标（\b)，再用空格覆盖原先字符，再左移光标的方式来达到了**退格**的效果。
 
 ### 4.timer.c
 
@@ -131,6 +180,49 @@ ANOS
 
 ![dida2](pictures/dida2.png)
 
-## 经验总结与思考
+#### 3.串口输入测试
 
-- 硬件寄存器（控制状态寄存器）
+一开始在终端中始终无法输入字符，debug的过程首先在main.c中加入调试代码打印相关**硬件寄存器**的配置状况（对应的[DEBUG]代码在main.c的注释里），然后显示初始化后配置都已正常。然后开始检查**相关函数**，在与串口中断处理相关的`trap_kernel_handler()`，`external_interrupt_handler()`和`uart_intr()`中分别加入调试代码，结果运行后显示**一直在重复地陷入S-mode软件中断，系统根本没有空闲处理输入字符引起的外设中断**！调试输出如下所示：
+
+![image-20251021163339426](pictures/uart_error.png)
+
+原因是**我们原先在`trap_kernel_handler()`函数中没有对case 1（S-mode软件中断）进行任何处理**！系统在通过时钟中断进入S-mode软件中断后没有清除 SSIP bit，导致SSIP 一直为 1，于是CPU 每次返回都会再次触发中断，由此陷入了无限中断循环
+
+后来在case 1中补上了`w_sip(r_sip() & ~2)`这行代码清空SSIP bit，以及再后来在case 1中调用了`timer_interrupt_enable()`(这个函数中写了`w_sip(r_sip() & ~2)`)后，终于成功触发了串口中断！
+
+![image-20251021164524057](pictures/uart_success.png)
+
+串口输入测试也通过！能输入字符并回显到屏幕上(包括Backspace和换行)
+
+#### 4. 补充测试
+
+
+
+
+
+## 问题与思考
+
+#### 源码的一个小问题
+
+在调试`uart.c`中的`uart_intr()`函数时，需要用到在`lib/type.h`中对于LSR寄存器`IER_RX_ENABLE`(接收中断使能位)的宏定义，然后发现助教给的源码中对于IER_RX_ENABLE（接收中断使能位）和IER_TX_ENABLE（空中断使能位）的宏定义好像写反了，进行了修改:relaxed:
+
+```c
+//lib/type.h 修改前
+#define IER_TX_ENABLE (1 << 0)
+#define IER_RX_ENABLE (1 << 1)
+//lib/type.h 修改后
+#define IER_TX_ENABLE (1 << 1) // 空中断使能位为倒数第二位
+#define IER_RX_ENABLE (1 << 0) // 接收中断使能是倒数第一位
+```
+
+#### 退格处理不完善
+
+在串口输入测试中，目前本系统已支持换行和退格的基本操作，但**对于已经换行后的前一行内容无法进行删除**！这是由于**终端显示机制（QEMU 的 `-nographic` ）限制**导致终端的光标无法上移一行，若想要完善的话需要引入**行缓冲区**和一些其他与**命令行编辑器**的有关的特殊处理。
+
+但我们考虑到本次实验的重点是**中断的处理逻辑**，输入测试的目的也是验证串口中断的正常运行，没必要在输入逻辑中做过多复杂的处理，所以对于“删除输入的上一行”暂时没有进行过多的完善。
+
+#### 写OS时一定要“有进有出”
+
+我们在上面串口输入测试时，刚开始就是因为没有调用`w_sip(r_sip() & ~2)`清空SSIP bit结束软件中断，导致系统一直陷入S-mode软件中断而无法执行串口中断。得到的教训是，在写与硬件相关的程序中，**启用某个处理程序后一定要记得在处理完后手动关闭**（或手动进行关闭程序相关的处理）！也就是说，**中断不是处理完后“自动消失”**的，必须主动告诉硬件已经处理完成。
+
+在本次实验中借用PLIC能力实现外设中断时也体现了这个原则，在进入外设中断处理函数后通过`plic_claim()`获取中断号并处理完中断后，**一定还要`plic_complete(irq)`确认完成该中断**。在之前实验的自旋锁使用上也是如此，利用`spinlock_acquire(&print_lk)`加锁以后，**还要记得利用`spinlock_release(&print_lk) `解锁**，不然就会“一直被锁在厕所里“​！:stuck_out_tongue_closed_eyes:

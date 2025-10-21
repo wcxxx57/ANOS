@@ -7,8 +7,6 @@ __attribute__((aligned(16))) uint8 CPU_stack[4096 * NCPU];
 extern void main();
 extern void timer_vector();  // M-mode时钟中断处理程序，在trap.S中定义
 extern void kernel_vector(); // S-mode陷阱处理程序，在trap.S中定义
-//extern uint64 INTERVAL; //在trap/type.h中定义
-//extern uint64 CLINT_MTIMECMP(int hartid); //在trap/type.h中定义
 
 struct mscratch_area {
     uint64 a1_saved;
@@ -53,10 +51,9 @@ void start()
     w_tp(id);
 
     // 委托S-mode处理所有trap
-    //w_stvec((uint64)kernel_vector);//!s-mode陷阱向量的位置 //在trap_kernel.c中已设置
-    w_medeleg(0xffff);//委托中断
-    w_mideleg(0xffff);//委托异常
-    w_sie(r_sie() | SIE_SEIE | SIE_STIE | SIE_SSIE);//s-mode开启中断
+    w_medeleg(0xffff);//委托异常
+    w_mideleg(0xffff);//委托中断
+    w_sie(r_sie() | SIE_SEIE | SIE_STIE | SIE_SSIE);//s-mode开启三种中断
 
 
     // 时钟中断初始化 (唯一需要在M-mode处理的中断)
