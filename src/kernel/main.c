@@ -9,6 +9,7 @@ int main()
 {    
     // 初始化UART串口
     uart_init();
+    
     // 初始化 S-mode 的中断/异常处理
     trap_kernel_init();
     trap_kernel_inithart();
@@ -28,7 +29,7 @@ int main()
     // printf("kernel_vector addr: %p\n", kernel_vector);
 
 
-    // //---[test]串口输入测试---
+    //---[test]串口输入测试---
     // int cpuid = mycpuid();
     // if (cpuid == 0) {
     //     printf("CPU %d is booting!\n", cpuid);
@@ -48,7 +49,7 @@ int main()
     //     }
     // }
    
-
+    // ---[test]时钟中断测试---
     int cpuid = mycpuid();
     if (cpuid == 0) {
         print_init();
@@ -83,4 +84,35 @@ int main()
         }
         asm volatile("wfi");              // 等待中断，降低忙等
     }
+
+    // ---[test]补充测试---
+    // UART与Timer共存性测试
+    // int cpuid = mycpuid();
+    // if (cpuid == 0) {
+    //     printf("CPU %d is booting!\n", cpuid);
+    //     __sync_synchronize();
+    //     started = 1;
+    // } else {
+    //     while (started == 0) { }
+    //     __sync_synchronize();
+    //     printf("CPU %d is booting!\n", cpuid);
+    // }
+
+    // uint64 last = 0, last_print = 0;
+    // const uint64 print_every = 50;   // 每 50 个 tick 打一次, 避免刷屏干扰 UART 回显
+
+    // while (1) {
+    //     if (cpuid == 0) {             // 仅 CPU0 打印心跳
+    //         uint64 t = timer_get_ticks();
+    //         if (t != last) {          // 只在 tick 变化时处理
+    //             last = t;
+    //             if (t - last_print >= print_every) {
+    //                 last_print = t;
+    //                 printf("ticks=%d\n", (int)t);
+    //             }
+    //         }
+    //     }
+    //     asm volatile("wfi");          // 让位给中断 (Timer / UART)
+    // }
+
 }
