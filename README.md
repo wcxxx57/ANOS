@@ -75,7 +75,7 @@ ANOS
 
 我们对陷阱系统的初步实现**首先从理解trap.S开始**。trap.S中包含陷阱系统处理的核心流程，有`kernel_vector`和`timer_vector`两部分。
 
-`kernel_vector`是写入`stvec`寄存器的**中断处理晨旭入口地址**（s-mode）；`timer_vector`是写入`mtvec`寄存器的**时钟中断处理程序入口**（m-mode）。
+`kernel_vector`是写入`stvec`寄存器的**中断处理程序入口地址**（s-mode）；`timer_vector`是写入`mtvec`寄存器的**时钟中断处理程序入口**（m-mode）。
 
 为了理解得更清楚，我们将trap.S的执行流程整理为如下图所示：
 
