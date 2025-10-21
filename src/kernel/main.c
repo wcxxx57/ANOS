@@ -13,7 +13,7 @@ int main()
     trap_kernel_init();
     trap_kernel_inithart();
     
-    //---[DEBUG]查看相关硬件寄存器配置是否正确---
+    ////---[DEBUG]查看相关硬件寄存器配置是否正确---
     // printf("=== DEBUG START ===\n");
     // printf("STVEC: %p\n", r_stvec());
     // printf("SSTATUS: %p\n", r_sstatus() & SSTATUS_SIE ? "SIE=ON" : "SIE=OFF");
@@ -28,7 +28,7 @@ int main()
     // printf("kernel_vector addr: %p\n", kernel_vector);
 
 
-    // 串口输入测试
+    // //---[test]串口输入测试---
     // int cpuid = mycpuid();
     // if (cpuid == 0) {
     //     printf("CPU %d is booting!\n", cpuid);
@@ -61,7 +61,7 @@ int main()
         printf("CPU %d is booting!\n", cpuid);
     }
 
-    // 时钟滴答测试
+    //// ---[test]时钟滴答测试---
     // uint64 last = (uint64)-1;
     // while (1) {
     //     uint64 t = timer_get_ticks();
@@ -71,7 +71,7 @@ int main()
     //     }
     // }
 
-    // 时钟快慢测试
+    // ---[test]时钟快慢测试---
     uint64 last = (uint64)-1;
     while (1) {
         if (cpuid == 0) {                 // 只在 CPU0 打印，避免多核重复输出
