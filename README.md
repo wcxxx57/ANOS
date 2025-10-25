@@ -333,7 +333,7 @@ return &curr[idx]; //直接返回当前PTE
   ```c
 if (len == 0) panic("vm_mappages: len is zero");// 1. 长度必须大于 0
 if (va % PGSIZE != 0 || pa % PGSIZE != 0) panic("vm_mappages: va or pa not page-aligned");// 2. va 和 pa 必须页对齐
-if (va + len > VA_MAX) panic("vm_mappages: virtual address overflow");3. 不能越界
+if (va + len > VA_MAX) panic("vm_mappages: virtual address overflow");//3. 不能越界
   ```
 
   接着，进行**逐页映射**（已`PGSIZE`整页为单位进行逐页映射），建立映射的本质是**找到`va`在页表对应位置的`pte`并修改它**，找到对应PTE指针的过程需要需要用到我们刚刚前面实现的`vm_getpte`函数（`alloc`参数设为true，表示如果路径不存在，自动创建中间页表），修改PTE的就相当于给对应的`pte`设置正确的**物理页号**（PPN），**权限**（perm）和**有效位**（V=1），核心代码：
