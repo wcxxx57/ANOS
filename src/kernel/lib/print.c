@@ -55,8 +55,8 @@ static void printptr(uint64 x)
 /*
     标准化输出, 需要支持:
     1. %d (32位有符号数,以10进制输出)
-    2. %p (32位无符号数,以16进制输出)
-    3. %x (64位无符号数,以0x开头的16进制输出)
+    2. %p (64位无符号数,以0x开头的16进制输出)
+    3. %x (32位无符号数,以16进制输出)
     4. %c (单个字符)
     5. %s (字符串)
     提示: stdarg.h中的va_list中包括你需要的参数地址
@@ -93,10 +93,10 @@ void printf(const char *fmt, ...)
                 printint(va_arg(ap,int),10,1);
                 break;
             case 'p':
-                printint(va_arg(ap,uint32),16,0);
+                printptr(va_arg(ap,uint64));
                 break;
             case 'x':
-                printptr(va_arg(ap,uint64));
+                printint(va_arg(ap,uint32),16,0);
                 break;
             case 'c':
                 c=va_arg(ap,int); // char会被提升为int
