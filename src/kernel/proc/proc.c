@@ -135,6 +135,6 @@ void proc_make_first()
     // 7. 绑定到当前 CPU，并进行上下文切换（启动 proczero 执行流）
     cpu_t *c = mycpu();
     c->proc =  &proczero;
-    swtch(&c->context, &proczero.ctx);
+    swtch(&c->ctx, &proczero.ctx);
     // 正常情况下不再返回；以后用户态陷入内核后，才会再次切回这里
 } 
