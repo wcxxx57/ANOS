@@ -78,6 +78,22 @@ void proc_make_first()
         panic("proc_make_first: proc_pgtbl_init failed");
     }
 
+    // // debug: 检查 TRAPFRAME 在用户页表中的映射，确保 trapframe 物理页正确映射
+    // pte_t *pte1 = vm_getpte(upgtbl, TRAPFRAME, false);
+    // if (!pte1) {
+    //     printf("DEBUG proc: no pte for TRAPFRAME\n");
+    // } else {
+    //     uint64 pteval = (uint64)(*pte1);
+    //     uint64 pa = PTE_TO_PA(pteval);
+    //     printf("DEBUG proc: TRAPFRAME pte=%p val=%p flags=%p pa=%p\n", pte1, pteval, (int)PTE_FLAGS(pteval), (void*)pa);
+    //     // 打印映射页的前几个字节（若内核恒等映射）
+    //     uint8 *kva = (uint8 *)pa;
+    //     printf("DEBUG proc: TRAPFRAME mapped content at pa:");
+    //     for (int i = 0; i < 16; i++) printf(" %0x", (unsigned int)kva[i]);
+    //     printf("\n");
+    // }
+
+
     // 3. 准备用户地址空间其他部分
     // 3.1 空洞（1页） [0, PGSIZE) 不映射
     
@@ -88,17 +104,40 @@ void proc_make_first()
         panic("proc_make_first: pmem_alloc for ucode failed");
     }
     memset(ucode_pa, 0, PGSIZE);  // 清零
+
     // 拷贝initcode到用户代码页
     if (initcode_len > PGSIZE) { // 拷贝前先长度保护
         panic("proc_make_first: initcode too big");
     }
     memmove(ucode_pa, initcode, (uint32)initcode_len);
+
+    // debug: 打印 ucode_pa / 前16字节
+    // unsigned char *b = (unsigned char *)ucode_pa;
+    // printf("DEBUG proc: ucode_pa=%p, first16:", ucode_pa);
+    // for (int i = 0; i < 16; i++) printf(" %x", (unsigned int)b[i]);
+    // printf("\n");
+
     // 映射：设置为可读写执行、用户态可访问，覆盖initcode有/无全局变量两种情况
     vm_mappages(upgtbl, 
                 UCODE_VA, 
                 (uint64)ucode_pa, 
                 PGSIZE, 
                 PTE_R | PTE_W | PTE_X | PTE_U); 
+
+    // // debug: 查询用户页表里的 PTE 并打印其值
+    // pte_t *pte = vm_getpte(upgtbl, UCODE_VA, false);
+    // if (!pte) {
+    //     printf("DEBUG proc: vm_getpte return NULL for UCODE_VA\n");
+    // } else {
+    //     uint64 pteval = (uint64)(*pte);
+    //     uint64 pa = PTE_TO_PA(pteval);
+    //     printf("DEBUG proc: upgtbl pte=%p val=0x%x flags=0x%x pa=%p\n", pte, pteval, (int)PTE_FLAGS(pteval), (void*)pa);
+    //     // 打印物理页前16字节
+    //     uint8 *kva = (uint8 *)pa;
+    //     printf("DEBUG proc: mapped content at pa:");
+    //     for (int i = 0; i < 16; i++) printf(" %x", (unsigned int)kva[i]);
+    //     printf("\n");
+    // }
               
     // 3.3 用户栈（1页，在trapframe之下） [TRAPFRAME - PGSIZE, TRAPFRAME)
     const uint64 USTACK_TOP = (uint64)TRAPFRAME; // 栈顶地址
@@ -124,8 +163,8 @@ void proc_make_first()
     proczero.tf = tf;
 
     // 5. 初始化用户初始寄存器状态（将由 user_return 装载）
-    tf->user_to_kern_epc = UCODE_VA;  // 用户代码入口点
-    tf->sp = USTACK_TOP;  // 用户栈顶
+    tf->user_to_kern_epc = UCODE_VA;  
+    tf->sp = USTACK_VA + PGSIZE;  // 用户栈顶
 
     // 6. 设置“回到内核”的着陆点（切到 proczero 后从 trap_user_return 开始）
     proczero.kstack = (uint64)KSTACK(mycpuid());
@@ -135,6 +174,7 @@ void proc_make_first()
     // 7. 绑定到当前 CPU，并进行上下文切换（启动 proczero 执行流）
     cpu_t *c = mycpu();
     c->proc =  &proczero;
+
     swtch(&c->ctx, &proczero.ctx);
     // 正常情况下不再返回；以后用户态陷入内核后，才会再次切回这里
 } 

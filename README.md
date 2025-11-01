@@ -321,3 +321,18 @@ LAB-3中我们验证了内核态时钟中断和串口中断的响应
 - 在LAB-5: 我们将赋予proczero更强大的内存管理能力, 并建立真正的系统调用体系
 
 - 在LAB-6：我们将引入proczero的子子孙孙, 实现完整的进程生命周期管理和多进程调度
+
+
+修改完kvm.c后:
+![alt text]({FC95DA3B-2EFB-49BB-A554-F24F82F4A3E5}.png)
+
+添加中断处理后:
+![alt text]({1C9F0AAA-3FE1-43BD-BED4-42EBC74CCA5B}.png)
+
+你遇到的是“窗口期”里的 S 态中断打断，导致把 S 态的 sepc（0x8000...）错误写进了 tf->user_to_kern_epc。随后 trap_user_return 用这个内核地址当作用户返回 PC，自然不会得到两次 ecall
+
+trap_user_return中需要传入的是虚拟地址！！！
+修改好后，为了可以进行中断处理，需要在trap_kernel_inithart中：在每个 hart 的 trap 初始化后一次性打开 S 态中断源和 SIE。
+然后在 trap_user_return 中：在把 stvec 切到 user_vector 之前关闭 S 态中断。
+
+![alt text]({F683ED5D-6C2A-4D33-8FDA-AA1E338D2865}.png)

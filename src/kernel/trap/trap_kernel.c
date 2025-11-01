@@ -40,6 +40,14 @@ char *exception_info[16] = {
     "Store/AMO page fault",           // 15
 };
 
+static inline void s_unmask_irqs(void)
+{
+    // 要打开的源：SSIE（软件中断）和 SEIE（外部中断）
+    uint64 sie = r_sie();
+    sie |= (SIE_SSIE | SIE_SEIE);
+    w_sie(sie);
+}
+
 // 实现位于 trap.S
 // 它是完整的内核态trap处理流程
 extern void kernel_vector();
@@ -62,6 +70,9 @@ void trap_kernel_inithart()
 
     // 填写内核态中断处理函数
     w_stvec((uint64)kernel_vector);
+
+    // 统一打开 S 态中断源位（sie）
+    // s_unmask_irqs();
 
     // 打开中断
     intr_on();
@@ -143,6 +154,13 @@ void timer_interrupt_handler()
     // 所以只需要指定一个CPU(CPU-0)负责更新时钟
     if(mycpuid() == 0)
         timer_update();
+
+    // 打印tick信息
+    uint64 ticks = timer_get_ticks();
+    if (ticks % 10 == 0) {
+        printf("[U] tick=%d\n", (int)ticks);
+    }
+
     // 清除 SSIP bit (S-mode software interrupt pending)
     // 宣布 S-mode 软件中断处理完成
     // 在 trap.S 里面有对应的两条命令, 去找找

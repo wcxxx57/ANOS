@@ -190,28 +190,32 @@ void kvm_init()
                 PTE_R | PTE_W);  // 不可执行
 
     // === Step 6: 映射 trampoline 区域 ===
-    uint64 trampoline_size = 0x1000; // 假设 trampoline 占用 4KB
+    extern char trampoline[];  // 链接符号：trampoline 代码所在“实际物理页”的地址
     vm_mappages(kernel_pgtbl,
-                TRAMPOLINE,  // va
-                TRAMPOLINE,  // pa
-                trampoline_size,
-                PTE_R | PTE_W | PTE_X);  // 可读写执行
+                (uint64)TRAMPOLINE,  // va
+                (uint64)trampoline,  // pa
+                PGSIZE,
+                PTE_R | PTE_X);  // 可读可执行
     
-    // === Step 7: 映射 trapframe 区域 ===
-    uint64 trapframe_size = 0x1000;  // 假设 trapframe 占用 4KB
-    vm_mappages(kernel_pgtbl,
-                TRAPFRAME,        // va
-                TRAPFRAME,        // pa
-                trapframe_size,
-                PTE_R | PTE_W);   // 可读写
-    // === Step 8: 映射每个进程的内核栈 (例如，procid=0) ===
-    uint64 kstack_size = 2 * PGSIZE;  // 每个进程的内核栈大小 2 页
+    // === Step 7: 映射每个进程的内核栈 (例如，procid=0) ===
+    // KSTACK(procid) 是高虚拟地址（每个栈相隔 2 页：1 页栈 + 1 页 guard）
+    // 这里给 proczero (procid=0) 分配 1 页物理栈，并映射到 KSTACK(0)
+    // 应该是在用户空间中分配的物理页！！！不是内核空间！！！
     uint64 procid = 0;  // 假设是进程 ID 为 0 的进程
+    void *kstack_pa = pmem_alloc(false);
+    if (!kstack_pa) panic("kvm_init: alloc kstack failed");
+    memset(kstack_pa, 0, PGSIZE);
+
     vm_mappages(kernel_pgtbl,
-                KSTACK(procid),    // va
-                KSTACK(procid),    // pa
-                kstack_size,
-                PTE_R | PTE_W);    // 可读写
+                (uint64)KSTACK(procid),   // VA
+                (uint64)kstack_pa,        // PA
+                PGSIZE*2,                   
+                PTE_R | PTE_W);           // 只读写
+
+    // // 检查 kernel 页表里 TRAMPOLINE 的 pte
+    // pte_t *kpte = vm_getpte(kernel_pgtbl, TRAMPOLINE, false);
+    // printf("DEBUG kvm: kernel pte for TRAMPOLINE=%p\n", kpte);
+    // if (kpte) printf("DEBUG kvm: pte=0x%x pa=0x%x flags=0x%x\n", (uint64)*kpte, PTE_TO_PA((uint64)*kpte), (int)PTE_FLAGS((uint64)*kpte));
 }
 
 // 每个CPU都需要调用, 从不使用页表切换到使用内核页表
