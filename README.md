@@ -342,5 +342,5 @@ LAB-3中我们验证了内核态时钟中断和串口中断的响应
 
 为了测试中断，在timer_interrupt_handler中添加打印tick，成功！
 
-![alt text](pictures/03.png)
+![alt text](pictures/01.png)
 
