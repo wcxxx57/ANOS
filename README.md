@@ -323,16 +323,24 @@ LAB-3中我们验证了内核态时钟中断和串口中断的响应
 - 在LAB-6：我们将引入proczero的子子孙孙, 实现完整的进程生命周期管理和多进程调度
 
 
-修改完kvm.c后:
-![alt text]({FC95DA3B-2EFB-49BB-A554-F24F82F4A3E5}.png)
+修复：
 
-添加中断处理后:
-![alt text]({1C9F0AAA-3FE1-43BD-BED4-42EBC74CCA5B}.png)
+1. kmv映射有问题
+2. 没有短暂关闭 S 态中断
 
-你遇到的是“窗口期”里的 S 态中断打断，导致把 S 态的 sepc（0x8000...）错误写进了 tf->user_to_kern_epc。随后 trap_user_return 用这个内核地址当作用户返回 PC，自然不会得到两次 ecall
+遇到问题：“窗口期”里的 S 态中断打断，导致把 S 态的 sepc（0x8000...）错误写进了 tf->user_to_kern_epc。随后 trap_user_return 用这个内核地址当作用户返回 PC，自然不会得到两次 ecall
+因此需要在 trap_user_return 中：在把 stvec 切到 user_vector 之前关闭 S 态中断。
 
-trap_user_return中需要传入的是虚拟地址！！！
-修改好后，为了可以进行中断处理，需要在trap_kernel_inithart中：在每个 hart 的 trap 初始化后一次性打开 S 态中断源和 SIE。
-然后在 trap_user_return 中：在把 stvec 切到 user_vector 之前关闭 S 态中断。
+3. 无法进入trap_user_handler
 
-![alt text]({F683ED5D-6C2A-4D33-8FDA-AA1E338D2865}.png)
+正确完成2之后，发现无法进入 trap_user_handler（因为未修复2之前，rap 直接落在 kernel_vector，因此可以进入 trap_kernel_handler，但无法成功输出hello world）
+（修复2之后，CPU 的 trap 路径从直接走 kernel_vector 变成走 trampoline（user_vector -> 保存到 TRAPFRAME -> 切回 kernel_vector -> 调 trap_user_handler），而这个链条中出现了问题，导致无法进入trap_user_handler）
+最终发现是因为trap_user_return中需要传入的是trapframe的虚拟地址！！！
+
+成功输出两次hello world！
+
+
+为了测试中断，在timer_interrupt_handler中添加打印tick，成功！
+
+![alt text](pictures/03.png)
+

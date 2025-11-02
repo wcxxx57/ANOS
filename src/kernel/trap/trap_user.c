@@ -14,15 +14,6 @@ extern char kernel_vector[]; // 内核态trap处理流程, 进入内核后应当
 extern char *interrupt_info[16]; // 中断错误信息
 extern char *exception_info[16]; // 异常错误信息
 
-// 屏蔽 S 态中断源
-static inline void s_mask_all_irqs(void)
-{
-    // 屏蔽 S 态软件/外部中断使能
-    uint64 sie = r_sie();
-    sie &= ~(SIE_SEIE | SIE_SSIE);
-    w_sie(sie);
-}
-
 // 在user_vector()里面调用
 // 用户态trap处理的核心逻辑
 void trap_user_handler()

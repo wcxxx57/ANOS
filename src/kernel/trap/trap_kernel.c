@@ -40,13 +40,6 @@ char *exception_info[16] = {
     "Store/AMO page fault",           // 15
 };
 
-static inline void s_unmask_irqs(void)
-{
-    // 要打开的源：SSIE（软件中断）和 SEIE（外部中断）
-    uint64 sie = r_sie();
-    sie |= (SIE_SSIE | SIE_SEIE);
-    w_sie(sie);
-}
 
 // 实现位于 trap.S
 // 它是完整的内核态trap处理流程
@@ -70,9 +63,6 @@ void trap_kernel_inithart()
 
     // 填写内核态中断处理函数
     w_stvec((uint64)kernel_vector);
-
-    // 统一打开 S 态中断源位（sie）
-    // s_unmask_irqs();
 
     // 打开中断
     intr_on();
