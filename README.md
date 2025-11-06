@@ -105,7 +105,7 @@ ECNU-OSLAB-2025-TASK
 
 ​		ok！理解了**地址空间机制**和**进程诞生流程**，接下来就可以实现具体的代码了！
 
-### 1. kvm.c补充映射
+### 1. [kvm.c](src/kernel/mem/kvm.c)补充映射
 
 在`kvm.c`中补充映射了trampoline和KSTACK(0)区域，建立了**trampoline区域**和**第一个进程的内核栈**在**内核页表**上的映射：
 
@@ -114,11 +114,11 @@ m_mappages(kernel_pgtbl,TRAMPOLINE,(uint64)trampoline,PGSIZE, PTE_R | PTE_W | PT
 vm_mappages(kernel_pgtbl,KSTACK(0),(uint64)kstack_pa,PGSIZE, PTE_R | PTE_W); // 映射 KSTACK(0)
 ```
 
-### 2. proc.c
+### 2. [proc.c](src/kernel/proc/proc.c)
 
 
 
-### 3. trap_user.c
+### 3. [trap_user.c](src/kernel/trap/trap_user.c)
 
 用户态陷阱处理结构（A-B-C-D）：
 
