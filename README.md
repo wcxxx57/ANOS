@@ -97,7 +97,7 @@ ECNU-OSLAB-2025-TASK
 
 - **执行流**：
 
-  ​	程序启动后，首先进入**OS内核执行流**：`entry.S->start.c->main.c->proc_make_first`，经过`proc_make_first`函数的最后一步: `swtch(old_context, new_context)`切换到了**proczero进程**：`trap_user_return->trampoline中的user_return`，然后通过`user_return`的最后一步`sret`回到用户态进入`initcode.c`，在initcode中通过`syscall(SYS_helloworld);`进行了系统调用，进入**用户态陷阱处理程序**：`user_vector->trap_user_handler->trap_user_return->user_return`，处理完系统调用又继续回到用户态程序执行下面的指令。如下图所示：
+  ​	程序启动后，首先进入**OS内核执行流**：`entry.S->start.c->main.c->proc_make_first`，经过`proc_make_first`函数的最后一步: `swtch(old_context, new_context)`切换到了**proczero进程**：`trap_user_return->trampoline中的user_return`，然后通过`user_return`的最后一步`sret`回到用户态进入`initcode.c`，在initcode中通过`syscall(SYS_helloworld);`进行了系统调用，进入**用户态陷阱处理程序**：`user_vector->trap_user_handler->trap_user_return->user_return`，处理完系统调用又继续回到用户态程序执行下面的指令。梳理为如下图所示：（理解执行流对实验中debug也非常重要，之前我们一直无法进入`trap_user_handler`函数，理解执行流才方便**定位到底哪一环出错**！理解了好久终于明白了！）
 
   ![执行流图示](pictures/process.png)
 
