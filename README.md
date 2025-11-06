@@ -140,7 +140,7 @@ trap_user_return的作用是为进程**从内核态进入用户态前做准备�
 
 前两点相当于为进入用户态以后再发生trap做准备，第三第四点相当于为正确地返回用户态的正确位置做准备，最后一点就是调用user_return，再在该汇编中切换回用户页表、恢复用户态寄存器，真正进入到用户态。
 
-> 要注意的是trap_user_return中的地址设置都要使用**正确的虚拟地址**！在`trap_user_return()`函数运行时使用的是**内核页表**，在`trampoline.S`中的`user_return`刚开始时，通过`csrw satp, a1`指令切换到了**用户页表**。所以在调用`user_return`切换回用户态时，要使用**内核页表下的虚拟地址**；在设置`user_vector`用户态trap处理入口时要使用**用户页表下的虚拟地址**（因为是在用户态trap，已启用用户页表），不过由于**`TRAMPOLINE`在内核页表中和用户页表中都有映射**，在切换前后都可使用。也不可以直接使用`(uint64)user_vector`和`(uint64)user_return`这种链接时的**物理/恒等映射地址**，否则会因页表未映射而 crash！
+> 要注意的是trap_user_return中的地址设置都要使用**正确的虚拟地址**！在`trap_user_return()`函数运行时使用的是**内核页表**，在`trampoline.S`中的`user_return`刚开始时，通过`csrw satp, a1`指令切换到了**用户页表**。所以在调用`user_return`切换回用户态时，要使用**内核页表下的虚拟地址**；在设置`user_vector`用户态trap处理入口时要使用**用户页表下的虚拟地址**（因为是在用户态trap，已启用用户页表），不过由于 **`TRAMPOLINE`在内核页表中和用户页表中都有映射** ，在切换前后都可使用。也不可以直接使用`(uint64)user_vector`和`(uint64)user_return`这种链接时的**物理/恒等映射地址**，否则会因页表未映射而 crash！
 
 ```c
 // user_vector地址——trap处理入口
