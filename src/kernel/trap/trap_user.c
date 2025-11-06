@@ -82,8 +82,8 @@ void trap_user_handler()
 // 内核态返回用户态
 void trap_user_return()
 {
-    proc_t *p = myproc();           // 当前进程结构体
-    trapframe_t *tf = p->tf; // 进程的 trapframe（保存有用户态寄存器）
+    proc_t *p = myproc();         
+    trapframe_t *tf = p->tf; 
     uint64 user_satp = MAKE_SATP(p->pgtbl);  // 获取用户页表的 satp 值
 
     // 在把 stvec 切到 user_vector 之前关闭 S 态中断
