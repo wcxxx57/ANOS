@@ -328,31 +328,18 @@ void trap_user_return()
 
 **问题分析**
 
-修复了问题一之后，我们依然无法输出两次“hello world”，通过调试打印，发现此时可以进入`trap_user_return`，但无法进入`trap_user_handler`：
+- 修复了问题一之后，我们依然无法输出两次“hello world”，通过调试打印，发现此时可以进入`trap_user_return`，但无法进入`trap_user_handler`：
 
-![alt text](pictures/bug.png)
+  ![alt text](pictures/bug.png)
 
-由于执行流是A-B-C-D的结构：`user_vector -> trap_user_handler -> trap_user_return -> user_return`，而proczero 是直接从C-D开始的; 只有当用户态发生trap后, 才会走完A-B-C-D的完整过程。因此我们怀疑是**为下一次陷阱所做的准备工作出了问题**，特别是与**地址空间**相关的设置。
+  我们怀疑是**`proczero`为下一次陷阱所做的准备工作出了问题**，特别是与**地址空间**相关的设置。
 
-我们仔细梳理了从用户态发起系统调用到进入`trap_user_handler`的流程：
+  我们仔细梳理了从用户态发起系统调用到进入`trap_user_handler`的流程，发现我们在以下两步出现问题：
 
-1.  用户代码执行 `ecall` 指令，CPU 陷入 S 态。
-2.  硬件根据 `stvec` 的值，跳转到 `user_vector` 开始执行。**关键点在于，此时 `satp` 仍然指向用户页表。**
-3.  `user_vector` 的汇编代码需要立刻保存所有用户寄存器。它**从 `sscratch` 中读取 `trapframe` 的地址**，然后将寄存器值存入该地址。
-4.  保存完毕后，`user_vector` 才会跳转到 `trap_user_handler`。
+  - 硬件需要根据 `stvec` 的值，跳转到 `user_vector` 开始执行，而此时 `satp` 仍然指向**用户页表**。所以，`stvec`也 必须指向**用户页表下的有效地址**，否则 CPU 无法正确跳转到 `user_vector`。
+  - `user_vector` 需要通过读取 `sscratch` 中的 `trapframe` 的地址来保存所有用户寄存器。而`sscratch` 必须保存**用户页表下的 `trapframe` 地址**，否则 `user_vector` 无法正确保存寄存器。
 
-经过分析，我们发现**问题出在第2步和第3步**：
-
-- 在第2步中，`stvec` 必须指向**用户页表下的有效地址**，否则 CPU 无法正确跳转到 `user_vector`。
-- 在第3步中，`sscratch` 必须保存**用户页表下的 `trapframe` 地址**，否则 `user_vector` 无法正确保存寄存器。
-
-此外，还需注意：**`user_return` 也必须使用用户页表下的有效地址**，因为它会在切换回用户态时被调用。
-
-而我们恰恰忽略了这一点，在 `trap_user_return` 函数中（此时运行在**内核页表**环境下），我们错误地**使用了只在内核空间有效的地址来为下一次陷阱做准备**：
-
-- **`stvec`的设置**：我们直接使用了 `(uint64)user_vector`，这是一个**链接时的物理/内核恒等映射地址**，在用户页表中并未映射，导致 `ecall` 后 CPU 无法找到陷阱入口。
-- **`sscratch`的设置**：我们写入了 `(uint64)tf`，这是 `trapframe` 物理页在**内核**中的虚拟地址，在用户页表中同样未映射，导致 `user_vector` 无法正确保存寄存器。
-- **`user_return`的调用**：我们直接使用了 `((void(*)(trapframe_t*,uint64))user_return)(tf, user_satp)`，`user_return` 也是一个**链接时的物理/内核恒等映射地址**，在用户页表中并未映射，导致无法正确切换回用户态；并且传入的 `tf` 也是内核虚拟地址。
+  此外，还需注意：**`user_return` 也必须使用用户页表下的有效地址**，因为它会在切换回用户态时被调用。而我们在 `trap_user_return` 函数中（此时运行在**内核页表**环境下）错误地**使用了只在内核空间有效的地址来为下一次陷阱做准备**。
 
 **修复方案**
 
