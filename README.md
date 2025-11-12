@@ -165,66 +165,22 @@ vm_mappages(upgtbl, (uint64)TRAPFRAME, (uint64)trapframe, PGSIZE, PTE_R | PTE_W)
 
 `proc_make_first`函数是本次实验的核心，它负责**从无到有创建出第一个用户进程 `proczero`**，其中我们主要完成了以下步骤：
 
-- 申请trapframe的物理页（位于**内核空间**，用于保存**用户态和内核态切换**时的寄存器状态）
+- 申请trapframe的物理页：位于**内核空间**，用于保存**用户态和内核态切换**时的寄存器状态；
 
-```c
-trapframe_t *tf = (trapframe_t *)pmem_alloc(true);
-```
+- 创建用户页表，并映射`trampoline`和`trapframe`区域：`proc_pgtbl_init`中已实现，直接调用即可；
 
-- 创建用户页表，并映射`trampoline`和`trapframe`区域（`proc_pgtbl_init`中已实现）
+- 映射用户代码 ucode：本实验中为 **`initcode`嵌入内核的字节数组**，需要申请一个物理页、将`initcode`数组内容拷贝进去、完成映射；
 
-```c
-pgtbl_t upgtbl = proc_pgtbl_init((uint64)tf);
-```
+- 映射用户栈 ustack：需要申请一个物理页、完成映射；
 
-- 映射用户代码 ucode（本实验中为 **`initcode`嵌入内核的字节数组**，需要申请一个物理页、将`initcode`数组内容拷贝进去、完成映射）
+- 初始化进程控制块 `proc_t` 的各项字段：设置pid、页表指针、堆顶指针、用户栈页数、trapframe指针；
 
-```c
-// 拷贝initcode到用户代码页
-memmove(ucode_pa, initcode, (uint32)initcode_len);
-// 映射
-vm_mappages(upgtbl, UCODE_VA, (uint64)ucode_pa, PGSIZE, PTE_R | PTE_W | PTE_X | PTE_U); 
-```
+- 设置用户态初始状态：**在trapframe中设置好proczero第一次进入用户态时的状态** —— PC 指向用户代码起始位置 `UCODE_VA`，栈指针指向用户栈顶 `USTACK_TOP`；
 
-- 映射用户栈 ustack （需要申请一个物理页、完成映射）
+- 设置内核态初始状态：**在context中设置好proczero内核执行流的起点** —— `swtch`切换后，返回地址指向 `trap_user_return`，栈指针指向该进程的内核栈顶；
 
-```c
-// 映射
-vm_mappages(upgtbl,USTACK_VA,(uint64)ustack_pa,PGSIZE,PTE_R | PTE_W | PTE_U);
-```
+- 启动第一个用户进程：将proczero设置为当前CPU的运行进程，并通过`swtch`**将执行流切换到 proczero 的上下文**，开始执行其内核入口；随后由 `trap_user_return → trampoline.user_return → sret` **真正进入用户态**，开始执行用户代码！
 
-- 初始化进程控制块 `proc_t` 的各项字段（设置pid、页表指针、堆顶指针、用户栈页数、trapframe指针）
-
-```c
-proczero.pid = 1;
-proczero.pgtbl = upgtbl;
-proczero.heap_top = 2 * PGSIZE; 
-proczero.ustack_npage = 1;       
-proczero.tf = tf;
-```
-
-- 设置用户态初始状态（**在trapframe中设置好proczero第一次进入用户态时的状态**：PC 指向用户代码起始位置 `UCODE_VA`，栈指针指向用户栈顶 `USTACK_TOP`）
-
-```c
-tf->user_to_kern_epc = UCODE_VA;  
-tf->sp = USTACK_TOP;
-```
-
-- 设置内核态初始状态（**在context中设置好proczero内核执行流的起点**：`swtch`切换后，返回地址指向 `trap_user_return`，栈指针指向该进程的内核栈顶）
-
-```c
-proczero.kstack = (uint64)KSTACK(mycpuid());
-proczero.ctx.ra = (uint64)trap_user_return; 
-proczero.ctx.sp = proczero.kstack + PGSIZE; 
-```
-
-- 启动第一个用户进程（将proczero设置为当前CPU的运行进程，并通过`swtch`**将执行流切换到 proczero 的上下文**，开始执行其内核入口；随后由 `trap_user_return → trampoline.user_return → sret` **真正进入用户态**，开始执行用户代码！）
-
-```c
-cpu_t *c = mycpu();
-c->proc =  &proczero;
-swtch(&c->ctx, &proczero.ctx);
-```
 
 ### 3. [trap_user.c](src/kernel/trap/trap_user.c)
 
@@ -283,7 +239,8 @@ trap_user_return的作用是为进程**从内核态进入用户态前做准备�
 
 ### 测试一: 系统调用
 
-#### 问题一：未短暂关闭 S 态中断导致的“窗口期”问题**
+#### 问题一：未短暂关闭 S 态中断导致的“窗口期”问题
+
 
 **问题分析**
 
@@ -298,15 +255,13 @@ trap_user_return的作用是为进程**从内核态进入用户态前做准备�
 - 硬件自动将当前的 PC 值（为内核地址）写入 sepc
 - 进入**内核态的中断处理流程**，处理 S 态中断
 
-当 S 态中断处理完成，再次调用 `trap_user_return` 时，它会读取这个**被污染的、指向内核地址的 sepc**，并用它作为下一次 sret 的返回地址。结果 CPU **在用户态尝试执行一个内核地址**，导致返回失败，无法再次进入 `trap_user_handler`，也就无法处理 `initcode` 里的系统调用了，因此看不到两次“hello world”的输出。
+当 S 态中断处理完成，再次调用 `trap_user_return` 时，它会读取这个**被污染的、指向内核地址的 sepc**，并用它作为下一次 sret 的返回地址。这导致CPU **在用户态尝试执行一个内核地址**，所以返回失败，无法再次进入 `trap_user_handler`，也就无法处理 `initcode` 里的系统调用了，因此不可能输出“hello world”。
 
 **修复方案**
 
 为了解决这个问题，我们需要在 `trap_user_return` 中，**在设置 sepc 之前，短暂关闭 S 态中断**，以防止在这个关键时间窗口内发生 S 态中断污染 sepc。
 
-具体实现是：在 `trap_user_return` 的开头调用 **`intr_off()` 关闭中断**，避免在设置 stvec/sepc/sstatus 的关键窗口被打断。
-
-同时我们在 sstatus 中**把 SPIE 置为 1**，这样在 sret 返回用户态后，中断会通过sstatus 的 SPIE 位**自动恢复中断**，因此我们也不需要再显式调用 intr_on() 恢复中断！
+具体实现是：在 `trap_user_return` 的开头调用 **`intr_off()` 关闭中断**，避免在设置 stvec/sepc/sstatus 的关键窗口被打断。同时我们在 sstatus 中**把 SPIE 置为 1**，这样在 sret 返回用户态后，中断会通过sstatus 的 SPIE 位**自动恢复中断**，因此我们也不需要再显式调用 intr_on() 恢复中断！
 
 ```c
 void trap_user_return()
@@ -328,22 +283,23 @@ void trap_user_return()
 
 **问题分析**
 
-- 修复了问题一之后，我们依然无法输出两次“hello world”，通过调试打印，发现此时可以进入`trap_user_return`，但无法进入`trap_user_handler`：
+修复了问题一之后，我们依然无法输出两次“hello world”，通过调试打印，发现此时可以进入`trap_user_return`，但无法进入`trap_user_handler`：
 
   ![alt text](pictures/bug.png)
 
-  我们怀疑是`proczero`**为下一次陷阱所做的准备工作出了问题**，特别是与**地址空间**相关的设置。
+结合用户态陷阱处理结构，我们怀疑是`proczero`**为下一次陷阱所做的准备工作出了问题**，特别是与**地址空间**相关的设置。
 
-  我们仔细梳理了从用户态发起系统调用到进入`trap_user_handler`的流程，发现我们在以下两步出现问题：
+接着仔细梳理了从用户态发起系统调用到进入`trap_user_handler`的执行流程，发现我们在以下三步出现问题：
 
   - 硬件需要根据 `stvec` 的值，跳转到 `user_vector` 执行，而此时 `satp` 仍然指向**用户页表**。所以，`stvec`也 必须指向**用户页表下的有效地址**，否则 CPU 无法正确跳转到 `user_vector`。
   - `user_vector` 需要通过读取 `sscratch` 中的 `trapframe` 的地址来保存所有用户寄存器。所以`sscratch` 必须保存**用户页表下的 `trapframe` 地址**，否则 `user_vector` 无法正确保存寄存器。
+  - **`user_return` 也必须使用用户页表下的有效地址**，因为它会在切换回用户态时被调用。
 
-  此外，还需注意：**`user_return` 也必须使用用户页表下的有效地址**，因为它会在切换回用户态时被调用。而我们在 `trap_user_return` 函数中（此时运行在**内核页表**环境下）错误地**使用了只在内核空间有效的地址来为下一次陷阱做准备**。
+而我们在 `trap_user_return` 函数中（此时运行在**内核页表**环境下）错误地**使用了只在内核空间有效的地址来为下一次陷阱做准备**。
 
 **修复方案**
 
-正确的做法是：必须使用在**用户和内核两个地址空间中都有效**的虚拟地址。而`TRAMPOLINE` 和 `TRAPFRAME` 这两个区域正是为此设计的，它们被同时映射到了用户和内核页表中。
+正确的做法是：必须使用在**用户和内核两个地址空间中都有效**的虚拟地址。而`TRAMPOLINE` 和 `TRAPFRAME` 这两个区域正是为此设计的，它们**被同时映射到了用户和内核页表中**。
 
 因此，我们需要修改  `trap_user_return`，必须使用这些**共享的虚拟地址**来完成设置：
 
