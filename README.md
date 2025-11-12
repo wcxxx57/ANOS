@@ -97,13 +97,13 @@ ECNU-OSLAB-2025-TASK
 
 - **执行流**：
 
-  ​	程序启动后，首先进入**OS内核执行流**：`entry.S->start.c->main.c->proc_make_first`，经过`proc_make_first`函数的最后一步: `swtch(old_context, new_context)`切换到了**proczero进程**：`trap_user_return->trampoline中的user_return`，然后通过`user_return`的最后一步`sret`回到用户态进入`initcode.c`，在initcode中通过`syscall(SYS_helloworld);`进行了系统调用，进入**用户态陷阱处理程序**：`user_vector->trap_user_handler->trap_user_return->user_return`，处理完系统调用又继续回到用户态程序执行下面的指令。梳理为如下图所示：（理解执行流对实验中debug也非常重要，之前我们一直无法进入`trap_user_handler`函数，理解执行流才方便**定位到底哪一环出错**！理解了好久终于明白了！）
+  	程序启动后，首先进入**OS内核执行流**：`entry.S->start.c->main.c->proc_make_first`，经过`proc_make_first`函数的最后一步: `swtch(old_context, new_context)`切换到了**proczero进程**：`trap_user_return->trampoline中的user_return`，然后通过`user_return`的最后一步`sret`回到用户态进入`initcode.c`，在initcode中通过`syscall(SYS_helloworld);`进行了系统调用，进入**用户态陷阱处理程序**：`user_vector->trap_user_handler->trap_user_return->user_return`，处理完系统调用又继续回到用户态程序执行下面的指令。梳理为如下图所示：（理解执行流对实验中debug也非常重要，之前我们一直无法进入`trap_user_handler`函数，理解执行流才方便**定位到底哪一环出错**！理解了好久终于明白了！）
 
   ![执行流图示](pictures/process.png)
 
-  ​	其中，关于**如何转到`initcode`用户代码**的：`initcode.c`被编译成字节数组嵌入内核，在 `proczero` 初始化时，它被映射到用户空间的用户代码起始位置，并通过设置 `sepc` 在`sret`进入用户态后实现精确跳转。 
-
-​		ok！理解了**地址空间机制**和**进程诞生流程**，接下来就可以实现具体的代码了！
+  	其中，关于**如何转到`initcode`用户代码**的：`initcode.c`被编译成字节数组嵌入内核，在 `proczero` 初始化时，它被映射到用户空间的用户代码起始位置，并通过设置 `sepc` 在`sret`进入用户态后实现精确跳转。 
+  	
+  	ok！理解了**地址空间机制**和**进程诞生流程**，接下来就可以实现具体的代码了！
 
 ### 1. [kvm.c](src/kernel/mem/kvm.c)补充映射
 
@@ -166,7 +166,7 @@ vm_mappages(upgtbl, (uint64)TRAPFRAME, (uint64)trapframe, PGSIZE, PTE_R | PTE_W)
 `proc_make_first`函数是本次实验的核心，它负责**从无到有创建出第一个用户进程 `proczero`**，其中我们主要完成了以下步骤：
 
 - 申请trapframe的物理页（位于**内核空间**，用于保存**用户态和内核态切换**时的寄存器状态）
-  
+
 ```c
 trapframe_t *tf = (trapframe_t *)pmem_alloc(true);
 ```
@@ -192,6 +192,7 @@ vm_mappages(upgtbl, UCODE_VA, (uint64)ucode_pa, PGSIZE, PTE_R | PTE_W | PTE_X | 
 // 映射
 vm_mappages(upgtbl,USTACK_VA,(uint64)ustack_pa,PGSIZE,PTE_R | PTE_W | PTE_U);
 ```
+
 - 初始化进程控制块 `proc_t` 的各项字段（设置pid、页表指针、堆顶指针、用户栈页数、trapframe指针）
 
 ```c
@@ -247,18 +248,7 @@ trap_user_return的作用是为进程**从内核态进入用户态前做准备�
 
 前两点相当于为进入用户态以后再发生trap做准备，第三第四点相当于为正确地返回用户态的正确位置做准备，最后一点就是调用user_return，再在该汇编中切换回用户页表、恢复用户态寄存器，真正进入到用户态。
 
-> 要注意的是trap_user_return中的地址设置都要使用**正确的虚拟地址**！在`trap_user_return()`函数运行时使用的是**内核页表**，在`trampoline.S`中的`user_return`刚开始时，通过`csrw satp, a1`指令切换到了**用户页表**。所以在调用`user_return`切换回用户态时，要使用**内核页表下的虚拟地址**；在设置`user_vector`用户态trap处理入口时要使用**用户页表下的虚拟地址**（因为是在用户态trap，已启用用户页表），不过由于 **`TRAMPOLINE`在内核页表中和用户页表中都有映射** ，在切换前后都可使用。也不可以直接使用`(uint64)user_vector`和`(uint64)user_return`这种链接时的**物理/恒等映射地址**，否则会因页表未映射而 crash！
-
-```c
-// user_vector地址——trap处理入口
-// uint64 user_vector_addr = (uint64)user_vector; 错误！
-uint64 user_vector_addr = (uint64)TRAMPOLINE+(uint64)(user_vector-trampoline); //正确√（用户页表下的虚拟地址）
-w_stvec(user_vector_addr);
-// user_return地址——切换回用户态
-// uint64 user_return_addr = (uint64)user_return; 错误！
-uint64 user_return_addr = (uint64)TRAMPOLINE+(uint64)(user_return-trampoline);// 正确√（内核页表下的虚拟地址）
-((void (*)(trapframe_t*, uint64))user_return_addr)((trapframe_t*)TRAPFRAME, user_satp);
-```
+> 要注意的是trap_user_return中的地址设置都要使用**正确的虚拟地址**！在`trap_user_return()`函数运行时使用的是**内核页表**，在`trampoline.S`中的`user_return`时，通过`csrw satp, a1`指令切换到了**用户页表**。一定要使用的**对应页表下的虚拟地址**，否则会有bug（相关bug的调试与修复见“测试与修复”的测试一）
 
 #### trap_user_handler
 
@@ -345,12 +335,14 @@ void trap_user_return()
 由于执行流是A-B-C-D的结构：`user_vector -> trap_user_handler -> trap_user_return -> user_return`，而proczero 是直接从C-D开始的; 只有当用户态发生trap后, 才会走完A-B-C-D的完整过程。因此我们怀疑是**为下一次陷阱所做的准备工作出了问题**，特别是与**地址空间**相关的设置。
 
 我们仔细梳理了从用户态发起系统调用到进入`trap_user_handler`的流程：
+
 1.  用户代码执行 `ecall` 指令，CPU 陷入 S 态。
 2.  硬件根据 `stvec` 的值，跳转到 `user_vector` 开始执行。**关键点在于，此时 `satp` 仍然指向用户页表。**
 3.  `user_vector` 的汇编代码需要立刻保存所有用户寄存器。它**从 `sscratch` 中读取 `trapframe` 的地址**，然后将寄存器值存入该地址。
 4.  保存完毕后，`user_vector` 才会跳转到 `trap_user_handler`。
-   
+
 经过分析，我们发现**问题出在第2步和第3步**：
+
 - 在第2步中，`stvec` 必须指向**用户页表下的有效地址**，否则 CPU 无法正确跳转到 `user_vector`。
 - 在第3步中，`sscratch` 必须保存**用户页表下的 `trapframe` 地址**，否则 `user_vector` 无法正确保存寄存器。
 
@@ -361,7 +353,7 @@ void trap_user_return()
 - **`stvec`的设置**：我们直接使用了 `(uint64)user_vector`，这是一个**链接时的物理/内核恒等映射地址**，在用户页表中并未映射，导致 `ecall` 后 CPU 无法找到陷阱入口。
 - **`sscratch`的设置**：我们写入了 `(uint64)tf`，这是 `trapframe` 物理页在**内核**中的虚拟地址，在用户页表中同样未映射，导致 `user_vector` 无法正确保存寄存器。
 - **`user_return`的调用**：我们直接使用了 `((void(*)(trapframe_t*,uint64))user_return)(tf, user_satp)`，`user_return` 也是一个**链接时的物理/内核恒等映射地址**，在用户页表中并未映射，导致无法正确切换回用户态；并且传入的 `tf` 也是内核虚拟地址。
-  
+
 **修复方案**
 
 正确的做法是：必须使用在**用户和内核两个地址空间中都有效**的虚拟地址。而`TRAMPOLINE` 和 `TRAPFRAME` 这两个区域正是为此设计的，它们被同时映射到了用户和内核页表中。
@@ -415,11 +407,17 @@ if (ticks % 10 == 0) {
   - 另外，也要注意在调用 `pmem_alloc()` 分配内存时，返回的是一个可在**当前地址空间中**安全访问的地址，并不是永远等于物理地址！
 
 - 关于**临界区保护与并发问题**
+
   - “窗口期”问题的修复过程让我深刻体会到：即使在单核环境下，**中断也会引入并发**。`trap_user_return` 函数中，从准备返回用户态的寄存器（如`sepc`）到最终执行 `sret` 指令之间，构成了一个**临界区**。
+
   - 如果不使用 `intr_off()` 关闭中断来保护这个临界区，任何外部中断（如时钟中断）都可能“恰好”在此时发生，污染关键寄存器，导致系统状态不一致。因此，我认识到：
+
     > **中断屏蔽是保护临界区最基础且有效的手段之一**。
 
 - 关于 **`TRAMPOLINE` 和 `TRAPFRAME` 设计**
+
   - “地址空间问题”的解决让我明白了`TRAMPOLINE` 和 `TRAPFRAME` 这两个特殊区域的精妙设计：
+
     > 在多特权级、多地址空间的操作系统中，**共享映射区域的设计是实现安全、高效上下文切换的关键**。
+
   - 通过将这两个区域**同时映射到内核页表和所有用户页表中的同一个虚拟地址**，我们能够确保无论CPU当前处于哪个地址空间，都能通过这个**固定的虚拟地址**找到陷阱处理的入口（`user_vector`）和出口（`user_return`），从而安全、可靠地完成特权级切换。如果没有这个共享区域，地址空间的隔离将使得这种切换变得异常困难。
