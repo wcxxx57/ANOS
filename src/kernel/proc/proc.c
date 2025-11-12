@@ -66,7 +66,6 @@ void proc_make_first()
         panic("proc_make_first: proc_pgtbl_init failed");
     }
 
-
     // 3. 准备用户地址空间其他部分
     // 3.1 空洞（1页） [0, PGSIZE) 不映射
     
@@ -106,7 +105,7 @@ void proc_make_first()
     proczero.tf = tf;
 
     // 5. 设置trapframe中的user_to_kern_epc (返回后被置为PC)、sp
-    tf->user_to_kern_epc = UCODE_VA;  
+    tf->user_to_kern_epc = UCODE_VA;  // sret后要跳转到用户代码入口
     tf->sp = USTACK_TOP;  // 用户栈顶
 
     // 6. 设置“回到内核”的着陆点（切到 proczero 后从 trap_user_return 开始）

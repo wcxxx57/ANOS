@@ -164,7 +164,7 @@ void kvm_init()
     vm_mappages(kernel_pgtbl,
                 TRAMPOLINE,  // va
                 (uint64)trampoline,  //pa
-                PGSIZE, // 假设 trampoline 占用 4KB
+                PGSIZE, 
                 PTE_R | PTE_W | PTE_X);  // 可读写执行
 
     // === Step 6: 映射每个进程的内核栈 (为每个 CPU 分配真实的物理页并映射) ===
