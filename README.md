@@ -332,12 +332,12 @@ void trap_user_return()
 
   ![alt text](pictures/bug.png)
 
-  我们怀疑是**`proczero`为下一次陷阱所做的准备工作出了问题**，特别是与**地址空间**相关的设置。
+  我们怀疑是`proczero`**为下一次陷阱所做的准备工作出了问题**，特别是与**地址空间**相关的设置。
 
   我们仔细梳理了从用户态发起系统调用到进入`trap_user_handler`的流程，发现我们在以下两步出现问题：
 
-  - 硬件需要根据 `stvec` 的值，跳转到 `user_vector` 开始执行，而此时 `satp` 仍然指向**用户页表**。所以，`stvec`也 必须指向**用户页表下的有效地址**，否则 CPU 无法正确跳转到 `user_vector`。
-  - `user_vector` 需要通过读取 `sscratch` 中的 `trapframe` 的地址来保存所有用户寄存器。而`sscratch` 必须保存**用户页表下的 `trapframe` 地址**，否则 `user_vector` 无法正确保存寄存器。
+  - 硬件需要根据 `stvec` 的值，跳转到 `user_vector` 执行，而此时 `satp` 仍然指向**用户页表**。所以，`stvec`也 必须指向**用户页表下的有效地址**，否则 CPU 无法正确跳转到 `user_vector`。
+  - `user_vector` 需要通过读取 `sscratch` 中的 `trapframe` 的地址来保存所有用户寄存器。所以`sscratch` 必须保存**用户页表下的 `trapframe` 地址**，否则 `user_vector` 无法正确保存寄存器。
 
   此外，还需注意：**`user_return` 也必须使用用户页表下的有效地址**，因为它会在切换回用户态时被调用。而我们在 `trap_user_return` 函数中（此时运行在**内核页表**环境下）错误地**使用了只在内核空间有效的地址来为下一次陷阱做准备**。
 
