@@ -8,6 +8,20 @@
 */
 uint64 sys_copyin()
 {
+    uint64 addr;
+    uint32 len;
+    arg_uint64(0, &addr);
+    arg_uint32(1, &len);
+
+    int buf[5]; // 假设最多拷贝5个（用于测试）
+    uvm_copyin(myproc()->pgtbl, (uint64)buf, addr, len * sizeof(int));
+
+    printf("sys_copyin: ");
+    for (uint32 i = 0; i < len; i++) {
+        printf("%d ", buf[i]);
+    }
+    printf("\n");
+
     return 0;
 }
 
@@ -16,9 +30,16 @@ uint64 sys_copyin()
     uint64 addr 数组起始地址
     成功返回拷贝的元素数量
 */
+
+static int kernel_array[5] = {1, 2, 3, 4, 5};// 内核中的测试数组
 uint64 sys_copyout()
 {
-	return 0;
+    uint64 addr;
+    arg_uint64(0, &addr);
+
+    uvm_copyout(myproc()->pgtbl, addr, (uint64)kernel_array, 5 * sizeof(int));
+
+    return 0;
 }
 
 /*
@@ -28,6 +49,14 @@ uint64 sys_copyout()
 */
 uint64 sys_copyinstr()
 {
+    uint64 addr;
+    arg_uint64(0, &addr);
+
+    char buf[256];
+    uvm_copyin_str(myproc()->pgtbl, (uint64)buf, addr, 256);
+
+    printf("sys_copyinstr: %s\n", buf);
+
     return 0;
 }
 

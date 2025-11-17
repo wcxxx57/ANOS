@@ -6,14 +6,49 @@
 // 注意: src dst 不一定是 page-aligned
 void uvm_copyin(pgtbl_t pgtbl, uint64 dst, uint64 src, uint32 len)
 {
+    uint32 copied = 0; // 记录已拷贝字节数
 
+    while (copied < len) {
+        // 获取src对应的PTE和物理地址
+        pte_t *pte = vm_getpte(pgtbl, src, false); 
+        if (pte == NULL || !(*pte & PTE_V))  panic("uvm_copyin: invalid user address");
+        uint64 pa = PTE_TO_PA(*pte); 
+        // 处理不page-aligned的情况-计算页内偏移和本页可拷贝字节数
+        uint64 offset = src % PGSIZE; //! 页内偏移
+        uint64 copy_len = PGSIZE - offset; //! 本页剩余可拷贝字节数
+        if (copy_len > len - copied) {
+            copy_len = len - copied; //! 防止多于实际需要拷贝字节数
+        }
+        // 执行拷贝并更新计数
+        memmove((void *)dst, (void *)(pa + offset), copy_len); 
+        src += copy_len;
+        dst += copy_len;
+        copied += copy_len;
+    }
 }
 
 // 内核态地址空间[src, src+len） 拷贝至 用户态地址空间[dst, dst+len)
 // 注意: src dst 不一定是 page-aligned
 void uvm_copyout(pgtbl_t pgtbl, uint64 dst, uint64 src, uint32 len)
 {
+    uint32 copied = 0;
 
+    while (copied < len) {
+        pte_t *pte = vm_getpte(pgtbl,dst, false);
+        if (pte == NULL || !(*pte & PTE_V))  panic("uvm_copyout: invalid user address");
+        uint64 pa = PTE_TO_PA(*pte);
+    
+        uint64 offset = dst % PGSIZE;
+        uint64 copy_len = PGSIZE - offset;
+        if (copy_len > len - copied) {
+            copy_len = len - copied;
+        }
+
+        memmove((void *)(pa + offset), (void *)src, copy_len);
+        src += copy_len;
+        dst += copy_len;
+        copied += copy_len;
+    }
 }
 
 // 用户态字符串拷贝到内核态
@@ -21,7 +56,30 @@ void uvm_copyout(pgtbl_t pgtbl, uint64 dst, uint64 src, uint32 len)
 // 注意: src dst 不一定是 page-aligned
 void uvm_copyin_str(pgtbl_t pgtbl, uint64 dst, uint64 src, uint32 maxlen)
 {
+    uint32 copied = 0;
 
+    while (copied < maxlen) {
+        pte_t *pte = vm_getpte(pgtbl, src, false);
+        if (pte == NULL || !(*pte & PTE_V))  panic("uvm_copyin_str: invalid user address");
+        uint64 pa = PTE_TO_PA(*pte);
+        
+        uint64 offset = src % PGSIZE;
+        uint64 copy_len = PGSIZE - offset;
+        if (copy_len > maxlen - copied) {
+            copy_len = maxlen - copied;
+        }
+        char *src_ptr = (char *)(pa + offset);
+        char *dst_ptr = (char *)dst;
+        for (uint32 i = 0; i < copy_len; i++) {
+            dst_ptr[i] = src_ptr[i];
+            if (src_ptr[i] == '\0') {
+                return; // 遇到 '\0' 终止
+            }
+        }
+        src += copy_len;
+        dst += copy_len;
+        copied += copy_len;
+    }
 }
 
 /*--------------------part-2: mmap_region相关--------------------*/

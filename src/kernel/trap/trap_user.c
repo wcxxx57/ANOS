@@ -1,4 +1,5 @@
 #include "mod.h"
+#include <stdint.h>
 #include "../mem/mod.h"  
 #define UCODE_VA PGSIZE
 
@@ -56,10 +57,14 @@ void trap_user_handler()
                 uint64 num = tf->a7; // 系统调用号
                 uint64 ret = 0;
                 switch (num) {
-                    case SYS_helloworld:
-                        // 第一个用户进程的系统调用：打印信息
-                        printf("proczero: hello world!\n");
-                        ret = 0;
+                    case SYS_copyin:
+                        ret = sys_copyin();
+                        break;
+                    case SYS_copyout:
+                        ret = sys_copyout();
+                        break;
+                    case SYS_copyinstr:
+                        ret = sys_copyinstr();
                         break;
                     default://! 其余系统调用暂未实现，直接报错
                         panic("trap_user_handler: unknown syscall");
