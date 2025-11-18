@@ -7,8 +7,8 @@ OBJCOPY = ${TOOLPREFIX}objcopy
 OBJDUMP = ${TOOLPREFIX}objdump
 
 # 编译相关配置
-CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb -gdwarf-2
-# CFLAGS += -Wall -O -fno-omit-frame-pointer -ggdb -gdwarf-2 # 忽略警告的配置（可用于还没写完时测试）
+# CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb -gdwarf-2
+CFLAGS += -Wall -O -fno-omit-frame-pointer -ggdb -gdwarf-2 # 忽略警告的配置（可用于还没写完时测试）
 CFLAGS += -MD
 CFLAGS += -mcmodel=medany
 CFLAGS += -ffreestanding -fno-common -nostdlib -mno-relax

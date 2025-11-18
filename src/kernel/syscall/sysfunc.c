@@ -67,7 +67,7 @@ uint64 sys_copyinstr()
 */
 uint64 sys_brk()
 {
-    push_off();
+    // push_off(); // 上锁防止时钟中断干扰页表打印（不加好像也行）
 
     uint64 new_top;
     arg_uint64(0, &new_top);
@@ -97,7 +97,7 @@ uint64 sys_brk()
     }
     printf("After the event: Current pgtbl:\n");
     vm_print(p->pgtbl);
-    pop_off();
+    // pop_off();
     return cur;
 }
 

@@ -76,6 +76,15 @@ void trap_user_handler()
                 tf->user_to_kern_epc += 4; // 系统调用返回时，PC 应该是 sepc + 4（类似中断）
                 break;
             }
+            case 13:
+            case 15:
+            {
+                printf("page fault occured! trap_id = %d\n", trap_id);
+                uint64 old_ustack_npage = p->ustack_npage;
+                uint64 ret = uvm_ustack_grow(p->pgtbl, old_ustack_npage, r_stval());
+                printf("ustack_npage: %d -> %d\n", old_ustack_npage, ret);
+                break;
+            }
             //! 其余异常类型暂时不处理，直接报错
             default:
                 panic("trap_user_handler: unknown exception");

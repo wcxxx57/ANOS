@@ -201,7 +201,38 @@ uint64 uvm_heap_ungrow(pgtbl_t pgtbl, uint64 cur_heap_top, uint32 len)
 // 成功返回new_ustack_npage，失败返回-1
 uint64 uvm_ustack_grow(pgtbl_t pgtbl, uint64 old_ustack_npage, uint64 fault_addr)
 {
+    // 检查page fault的地址是否合法
+    if (fault_addr >= TRAPFRAME || fault_addr <= MMAP_END) return (uint64)-1; 
 
+    // 取页对齐的 fault page VA
+    uint64 fault_page_va = (fault_addr / PGSIZE) * PGSIZE;
+    // 计算需要的栈页数
+    uint64 need_pages = (TRAPFRAME - fault_page_va) / PGSIZE;
+
+    // 如果已经包含该页，则无需扩展
+    if (need_pages <= old_ustack_npage) {
+        return old_ustack_npage;
+    }
+
+    // 边界检查：栈不能越过 MMAP_END
+    uint64 max_stack_pages = (TRAPFRAME - (uint64)MMAP_END) / PGSIZE;
+    if (need_pages > max_stack_pages) {
+        return (uint64)-1;
+    }
+
+    // 为每一页分配物理页并映射
+    for (uint64 i = old_ustack_npage+1 ; i <= need_pages; i++) {
+        uint64 va = TRAPFRAME - i* PGSIZE; // 第 i 个栈页的虚拟地址
+        void *pa = pmem_alloc(false);
+        if (!pa) return (uint64)-1;
+        memset(pa, 0, PGSIZE);
+        vm_mappages(pgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W | PTE_U);
+    }
+
+    proc_t *p = myproc();
+    p->ustack_npage = need_pages;
+
+    return need_pages;
 }
 
 /*----------------------part-4: 用户页表管理相关----------------------*/
