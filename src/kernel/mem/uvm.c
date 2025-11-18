@@ -149,13 +149,52 @@ void uvm_munmap(uint64 begin, uint32 npages)
 // 用户堆空间增加, 返回新的堆顶地址 (注意栈顶最大值限制)
 uint64 uvm_heap_grow(pgtbl_t pgtbl, uint64 cur_heap_top, uint32 len) 
 {
+    if (len == 0) return cur_heap_top;
 
+    uint64 new_top = cur_heap_top + (uint64)len;
+    // 计算页数，向上取整
+    uint64 cur_pages = (cur_heap_top + PGSIZE - 1) / PGSIZE;
+    uint64 new_pages = (new_top + PGSIZE - 1) / PGSIZE;
+
+    // 边界检查：不要越过 mmap 区域开始
+    if (new_pages * PGSIZE > (uint64)MMAP_BEGIN) {
+        return (uint64)-1;
+    }
+
+    // 为每一页分配物理页并映射
+    for (uint64 p = cur_pages ; p < new_pages; p++) {
+        uint64 va = p * PGSIZE;
+        void *pa = pmem_alloc(false);
+        if (!pa) return (uint64)-1;
+        memset(pa, 0, PGSIZE);
+        vm_mappages(pgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W | PTE_U);
+    }
+
+    return new_top; 
 }
 
 // 用户堆空间减少, 返回新的堆顶地址
 uint64 uvm_heap_ungrow(pgtbl_t pgtbl, uint64 cur_heap_top, uint32 len)
 {
+    if (len == 0) return cur_heap_top;
 
+    // 最低堆顶限制（proc_make_first 初始化的值）
+    const uint64 min_heap = 2 * PGSIZE;
+    if (cur_heap_top <= min_heap) return (uint64)-1; // 已经到最低
+    // 计算新的堆顶（若减少太多则到达最低堆顶）
+    uint64 new_top = (len > cur_heap_top - min_heap) ? min_heap : (cur_heap_top - (uint64)len);
+
+    // 取整：新堆顶按页对齐（向上取整）
+    uint64 cur_pages = (cur_heap_top + PGSIZE - 1) / PGSIZE;
+    uint64 new_pages = (new_top + PGSIZE - 1) / PGSIZE;
+
+    // 释放 [new_pages, cur_pages) 的页面
+    for (uint64 p = new_pages ; p < cur_pages; p++) {
+        uint64 va = p * PGSIZE;
+        vm_unmappages(pgtbl, va, PGSIZE, true);
+    }
+
+    return new_top;
 }
 
 // 处理函数栈增长导致的page fault事件

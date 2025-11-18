@@ -66,6 +66,9 @@ void trap_user_handler()
                     case SYS_copyinstr:
                         ret = sys_copyinstr();
                         break;
+                    case SYS_brk:
+                        ret = sys_brk();
+                        break;
                     default://! 其余系统调用暂未实现，直接报错
                         panic("trap_user_handler: unknown syscall");
                 }
