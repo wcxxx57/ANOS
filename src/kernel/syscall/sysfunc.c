@@ -16,7 +16,7 @@ uint64 sys_copyin()
     int buf[5]; // 假设最多拷贝5个（用于测试）
     uvm_copyin(myproc()->pgtbl, (uint64)buf, addr, len * sizeof(int));
 
-    printf("sys_copyin: ");
+    printf("get an array from user: ");
     for (uint32 i = 0; i < len; i++) {
         printf("%d ", buf[i]);
     }
@@ -39,6 +39,12 @@ uint64 sys_copyout()
 
     uvm_copyout(myproc()->pgtbl, addr, (uint64)kernel_array, 5 * sizeof(int));
 
+    printf("send an array to user: ");
+    for (int i = 0; i < 5; i++) {
+        printf("%d ", kernel_array[i]);
+    }
+    printf("\n");
+    
     return 0;
 }
 
@@ -55,7 +61,7 @@ uint64 sys_copyinstr()
     char buf[256];
     uvm_copyin_str(myproc()->pgtbl, (uint64)buf, addr, 256);
 
-    printf("sys_copyinstr: %s\n", buf);
+    printf("get a string from user: %s\n", buf);
 
     return 0;
 }
@@ -98,7 +104,7 @@ uint64 sys_brk()
     printf("After the event: Current pgtbl:\n");
     vm_print(p->pgtbl);
     // pop_off();
-    return cur;
+    return p->heap_top;
 }
 
 /*
