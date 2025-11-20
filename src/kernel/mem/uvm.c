@@ -124,7 +124,7 @@ static void mmap_merge(mmap_region_t *mmap_1, mmap_region_t *mmap_2, bool keep_m
 // 成功返回begin, 失败返回0
 static uint64 uvm_mmap_find(mmap_region_t *head_mmap, uint64 len, mmap_region_t **p_last_mmap, mmap_region_t **p_tmp_mmap)
 {
-
+    
 }
 
 // 在用户页表和进程mmap链里新增mmap区域 [begin, begin + npages * PGSIZE)
@@ -135,7 +135,6 @@ void uvm_mmap(uint64 begin, uint32 npages, int perm)
 {
 
 }
-
 
 // 在用户页表和进程mmap链里释放mmap区域 [begin, begin + npages * PGSIZE)
 // 失败则panic卡死
@@ -256,12 +255,12 @@ static void destroy_pgtbl(pgtbl_t pgtbl, uint32 level)
         // 如果这是叶子（具有 R/W/X 权限），释放对应的物理页
         if (level == 0 || (flags & (PTE_R | PTE_W | PTE_X))) {
             // 叶子映射到物理页（普通页面或大页），释放物理页
-            pmem_free((void *)pa);
+            pmem_free(pa, false);
         } else {
             // 非叶子：这是一个下一层页表的物理页
             // 递归销毁下一层页表，然后释放该页表页
             destroy_pgtbl((pgtbl_t)pa, level - 1);
-            pmem_free((void *)pa);
+            pmem_free(pa, false);
         }
     }
 }

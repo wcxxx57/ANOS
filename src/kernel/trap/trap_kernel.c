@@ -145,11 +145,11 @@ void timer_interrupt_handler()
     if(mycpuid() == 0)
         timer_update();
 
-    // 打印tick信息
-    uint64 ticks = timer_get_ticks();
-    if (ticks % 10 == 0) {
-        printf("[U] tick=%d\n", (int)ticks);
-    }
+    // 打印tick信息（调试）
+    // uint64 ticks = timer_get_ticks();
+    // if (ticks % 10 == 0) {
+    //     printf("[U] tick=%d\n", (int)ticks);
+    // }
 
     // 清除 SSIP bit (S-mode software interrupt pending)
     // 宣布 S-mode 软件中断处理完成
