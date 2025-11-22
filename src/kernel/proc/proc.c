@@ -104,6 +104,8 @@ void proc_make_first()
     proczero.heap_top = 2 * PGSIZE; 
     proczero.ustack_npage = 1;       
     proczero.tf = tf;
+    // 初始化 mmap 链表头
+    proczero.mmap = NULL;
 
     // 5. 设置trapframe中的user_to_kern_epc (返回后被置为PC)、sp
     tf->user_to_kern_epc = UCODE_VA;  

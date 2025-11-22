@@ -115,7 +115,29 @@ uint64 sys_brk()
 */
 uint64 sys_mmap()
 {
-    return 0;
+    uint64 start; // 起始地址
+    uint32 len;   // 地址范围
+    arg_uint64(0, &start);
+    arg_uint32(1, &len);
+
+    // 检查长度是否有效
+    if (len == 0) return (uint64)-1;
+    // 检查地址是否页对齐
+    if (start % PGSIZE != 0 || len % PGSIZE != 0) return (uint64)-1;
+
+    uint32 npages = len / PGSIZE;
+    int perm = PTE_R | PTE_W | PTE_U; 
+
+    uint64 ret_addr = uvm_mmap(start, npages, perm);
+
+    // 调试
+    proc_t *p = myproc();
+    printf("sys_mmap: start = %p, len = 0x%x, ret_addr = %p\n", (void *)start, len, (void *)ret_addr);
+    uvm_show_mmaplist(p->mmap);
+    vm_print(p->pgtbl);
+    printf("\n");
+
+    return ret_addr;
 }
 
 /*
@@ -126,5 +148,22 @@ uint64 sys_mmap()
 */
 uint64 sys_munmap()
 {
+    uint64 start; // 起始地址
+    uint32 len;   // 地址范围
+    arg_uint64(0, &start);
+    arg_uint32(1, &len);
+
+    if (len == 0) return (uint64)-1;
+    if (start % PGSIZE != 0 || len % PGSIZE != 0) return (uint64)-1;
+
+    uint32 npages = len / PGSIZE;
+    uvm_munmap(start, npages);
+
+    proc_t *p = myproc();
+    printf("sys_munmap: start = %p, len = 0x%x\n", (void *)start, len);
+    uvm_show_mmaplist(p->mmap);
+    vm_print(p->pgtbl);
+    printf("\n");
+
     return 0;
 }

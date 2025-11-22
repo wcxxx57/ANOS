@@ -122,25 +122,192 @@ static void mmap_merge(mmap_region_t *mmap_1, mmap_region_t *mmap_2, bool keep_m
 // 寻找一块足够大的区域(len), 作为 mmap_region
 // 由uvm_mmap调用(处理begin==0的情况)
 // 成功返回begin, 失败返回0
+// 专门处理begin==0的情况！
 static uint64 uvm_mmap_find(mmap_region_t *head_mmap, uint64 len, mmap_region_t **p_last_mmap, mmap_region_t **p_tmp_mmap)
 {
+    uint64 start = MMAP_BEGIN;
+    mmap_region_t *prev = NULL;
+    mmap_region_t *curr = head_mmap;
+
+    // 遍历mmap链寻找空隙
+    while (curr != NULL) {
+        // 计算当前空隙大小
+        uint64 gap_start = (prev == NULL) ? start : (prev->begin + prev->npages * PGSIZE);
+        uint64 gap_end = curr->begin;
+        if (gap_end > gap_start && (gap_end - gap_start) >= len) {
+            // 找到合适的空隙
+            // p_last_mmap和p_tmp_mmap是可选输出参数，为了符合sys_mmap的需求
+            if (p_last_mmap) *p_last_mmap = prev;
+            if (p_tmp_mmap) *p_tmp_mmap = curr;   
+            return gap_start;
+        }  
+        prev = curr;
+        curr = curr->next;
+    }
     
-}
+    // 检查最后一个节点之后的空隙
+    uint64 gap_start = (prev == NULL) ? start : (prev->begin + prev->npages * PGSIZE);
+    if (MMAP_END > gap_start && (MMAP_END - gap_start) >= len) {
+        if (p_last_mmap) *p_last_mmap = prev;
+        if (p_tmp_mmap) *p_tmp_mmap = NULL;   
+        return gap_start;
+    }
+
+    // 未找到合适空隙
+    return 0;
+}   
 
 // 在用户页表和进程mmap链里新增mmap区域 [begin, begin + npages * PGSIZE)
-// 调用者保证begin是page-aligned的, 页面权限为perm
+// 调用者保证begin是page-aligned的, 页面权限为perm -> uvm_mmap里面不需要检查是否页对齐
 // 注意: 如果start==0, 意味着需要内核自主找一块足够大的空间
 // 失败则panic卡死
-void uvm_mmap(uint64 begin, uint32 npages, int perm)
+// 修改为返回起始地址，方便sys_mmap使用
+uint64 uvm_mmap(uint64 begin, uint32 npages, int perm)
 {
+    proc_t *p = myproc();
+    uint64 len = (uint64)npages * PGSIZE;
+    mmap_region_t *prev = NULL;
+    mmap_region_t *curr = p->mmap;
 
+    // 1. 确定 begin 地址
+    if (begin == 0) { // 处理 begin==0 的情况
+        begin = uvm_mmap_find(p->mmap, len, &prev, &curr);
+        if (begin == 0) { // 未找到合适空间
+            panic("uvm_mmap: no enough mmap space");
+        }
+    } else {
+        // 检查 begin 范围
+        if (begin < MMAP_BEGIN || begin + len > MMAP_END) {
+            panic("uvm_mmap: begin out of range");
+        }
+
+        // 查找 mmap 链表的插入位置：mmap 是按 begin 升序排列的
+        while (curr != NULL){
+            if (curr->begin >= begin + len) {
+                break; // 找到插入点：prev < new < curr
+            }
+            if (curr->begin + curr->npages * PGSIZE > begin) {
+                panic("uvm_mmap: overlapping mmap region"); // 与现有区域重叠
+            }
+            prev = curr;
+            curr = curr->next;
+        }
+    }
+
+    // 2. 申请新的 mmap_region 节点
+    mmap_region_t *node = mmap_region_alloc();
+    node->begin = begin;
+    node->npages = npages;
+    node->next = curr; // 先连接后继节点：插在 curr 之前
+
+    // 3. 插入 mmap 链表
+    if (prev == NULL) {
+        p->mmap = node; // 插入到头部
+    } else {
+        prev->next = node; // 再连接前驱节点：插在 prev 之后
+    }
+
+    // 4. 尝试合并
+    // 先向后合并：若后继节点紧邻则合并，保留node
+    if (node->next != NULL && node->begin + node->npages * PGSIZE == node->next->begin) {
+        mmap_region_t *next_node = node->next; // 暂存即将被合并的节点
+        node->next = next_node->next; // 【关键修复】先从链表中摘除 next_node
+        mmap_merge(node, next_node, true); // 然后合并并释放 next_node
+    }
+    // 再向前合并：若前驱节点紧邻则合并，保留前驱节点
+    if (prev != NULL && prev->begin + prev->npages * PGSIZE == node->begin) {
+        prev->next = node->next; // 【关键修复】先从链表中摘除 node
+        mmap_merge(prev, node, true); // 然后合并并释放 node
+    }
+
+    // 5. 分配并映射物理页
+    for (uint32 i = 0; i < npages; i++) {
+        void *pa = pmem_alloc(false); // 为每一页分配物理页（非内核页）
+        if (!pa) {
+            panic("uvm_mmap: pmem_alloc failed");
+        }
+        memset(pa, 0, PGSIZE); // 清零
+        uint64 va = begin + (uint64)i * PGSIZE;
+        vm_mappages(p->pgtbl, va, (uint64)pa, PGSIZE, perm); // 映射，用户态可访问
+    }
+    return begin;
 }
 
 // 在用户页表和进程mmap链里释放mmap区域 [begin, begin + npages * PGSIZE)
 // 失败则panic卡死
 void uvm_munmap(uint64 begin, uint32 npages)
 {
+    proc_t *p = myproc();
+    uint64 end = begin + (uint64)npages * PGSIZE;
 
+    mmap_region_t *prev = NULL;
+    mmap_region_t *curr = p->mmap;
+
+    // 遍历 mmap 链表，处理与 [begin, end) 有交集的节点
+    while (curr != NULL) {
+        uint64 c_begin = curr->begin;
+        uint64 c_end = curr->begin + (uint64)curr->npages * PGSIZE;
+
+        // 如果 curr 与目标区间 [begin, end) 有交集，则处理交集部分
+        if (c_begin < end && c_end > begin) {
+            // 交集区间：[o_begin, o_end)
+            uint64 o_begin = (begin > c_begin) ? begin : c_begin;
+            uint64 o_end = (end < c_end) ? end : c_end;
+            uint32 o_npages = (uint32)((o_end - o_begin) / PGSIZE);
+
+            // 1. 解除交集区间的映射并释放物理页
+            for (uint32 i = 0; i < o_npages; i++) {
+                uint64 va = o_begin + (uint64)i * PGSIZE;
+                vm_unmappages(p->pgtbl, va, PGSIZE, true);
+            }
+
+            // 2. 根据交集在curr中的位置，调整/分裂/删除 curr 节点
+            if (o_begin > c_begin && o_end < c_end){
+                // 情况A：交集在 curr 中间 -> 分裂成两个节点
+                // 保留 curr 的前半部分，创建新节点保存后半部分
+                mmap_region_t *new_node = mmap_region_alloc();
+                new_node->begin = o_end;
+                new_node->npages = (uint32)((c_end - o_end) / PGSIZE);
+                new_node->next = curr->next;
+
+                // 调整 curr 节点为前半部分
+                curr->npages = (uint32)((o_begin - c_begin) / PGSIZE);
+                curr->next = new_node;
+
+                // 处理完 curr，继续从 new_node 的后继开始遍历
+                prev = new_node;
+                curr = new_node->next;
+            }
+            else if (o_begin == c_begin && o_end == c_end) {
+                // 情况B：交集覆盖整个 curr -> 删除 curr 节点
+                mmap_region_t *to_free = curr;
+                if (prev == NULL) {
+                    p->mmap = curr->next; // 删除头节点
+                } else {
+                    prev->next = curr->next; // 删除中间或尾节点
+                }
+                curr = curr->next; // 继续遍历后继节点
+                mmap_region_free(to_free);
+            }
+            else if (o_begin == c_begin) {
+                // 情况 C: 交集在 curr 前端 -> 调整 curr 起始地址和页数
+                curr->begin = o_end;
+                curr->npages = (uint32)((c_end - o_end) / PGSIZE);
+                prev = curr;
+                curr = curr->next;
+            }
+            else if (o_end == c_end) {
+                // 情况 D: 交集在 curr 后端 -> 调整 curr 页数
+                curr->npages = (uint32)((o_begin - c_begin) / PGSIZE);
+                prev = curr;
+                curr = curr->next;
+            }
+        } else {
+            // 无交集，继续遍历
+            prev = curr;
+            curr = curr->next;
+        }
+    }
 }
 
 /*------------------part-3: 用户空间heap和stack管理相关------------------*/

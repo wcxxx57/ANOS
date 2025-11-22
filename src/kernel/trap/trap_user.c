@@ -69,6 +69,12 @@ void trap_user_handler()
                     case SYS_brk:
                         ret = sys_brk();
                         break;
+                    case SYS_mmap:
+                        ret = sys_mmap();
+                        break;
+                    case SYS_munmap:
+                        ret = sys_munmap();
+                        break;
                     default://! 其余系统调用暂未实现，直接报错
                         panic("trap_user_handler: unknown syscall");
                 }

@@ -273,6 +273,25 @@ over_2 = true;
 
 ### 4.mmap 与 munmap
 
+调试：
+出现了死循环
+![alt text](pics/bug5.png)
+发现是因为uvm_mmap 中的合并逻辑破坏了链表结构:仔细看了下 mmap_merge，发现它只负责两个节点的“内容合并”和“内存释放”，但并没有处理链表指针的更新问题，因此须在外部手动更新。
+而在 uvm_mmap 中调用 mmap_merge 时，我释放了被合并的节点，但没有更新链表中前一个节点的 next 指针。这导致链表中出现了一个指向“已释放内存”（悬挂指针）的链接。
+
+当 uvm_show_mmaplist 遍历链表时，它会顺着这个悬挂指针跑进错误的内存区域（通常是跑进了空闲节点链表，或者指向了自己），从而导致死循环打印。
+
+修复：
+```c
+// 先向后合并：若后继节点紧邻则合并，保留node
+    if (node->next != NULL && node->begin + node->npages * PGSIZE == node->next->begin) {
+        mmap_region_t *next_node = node->next; // 暂存即将被合并的节点
+        node->next = next_node->next; // 【关键修复】先从链表中摘除 next_node
+        mmap_merge(node, next_node, true); // 然后合并并释放 next_node
+    }
+```
+
+成功输出!
 
 
 ### 5.页表的复制与销毁
