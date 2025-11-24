@@ -121,9 +121,19 @@ uint64 sys_mmap()
     arg_uint32(1, &len);
 
     // 检查长度是否有效
-    if (len == 0) return (uint64)-1;
+    if (len == 0) {
+        printf("sys_mmap: len == 0\n");
+        return (uint64)-1;
+    }
     // 检查地址是否页对齐
-    if (start % PGSIZE != 0 || len % PGSIZE != 0) return (uint64)-1;
+    if (start % PGSIZE != 0) {
+        printf("sys_mmap: start not page-aligned\n");
+        return (uint64)-1;
+    }
+    if (len % PGSIZE != 0) {
+        printf("sys_mmap: len not page-aligned\n");
+        return (uint64)-1;
+    }
 
     uint32 npages = len / PGSIZE;
     int perm = PTE_R | PTE_W | PTE_U; 

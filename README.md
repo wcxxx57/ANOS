@@ -397,7 +397,7 @@ over_2 = true;
 
 测试代码在[initcode.c](src/user/initcode.c)中的对应注释部分，在`sys_mmap`和`sys_munmap`中增加了一些调试性输出。测试结果见[`pictures/test4(1).png`](pictures/test4(1).png) - [`pictures/test4(7).png`](pictures/test4(7).png)，可以看出：
 
-- 在 `mmap` 阶段，随着我们不断填补空隙，`allocated mmap_region` 最终**成功合并为一行** `0x...000 ~ 0x...17000` (即 23 个页)，验证了合并逻辑的完备性。
+- 在 `mmap` 阶段，随着我们不断填补空隙，`allocated mmap_region` 最终**成功合并为一整块** ，验证了合并逻辑的完备性。
 - 在 `munmap` 阶段，链表正确地发生了分裂和缩小，最终**完全清空**，未发生内存泄漏或 panic。
 
 调试与bug修复：
@@ -421,9 +421,16 @@ over_2 = true;
     }
 ```
 
+#### （6）补充测试：mmap 与 munmap 的边界情况
+
+为了进一步验证 `mmap` 和 `munmap` 的正确性，我设计了一个补充测试，来测试**错误处理**、**重叠检测**、**自动分配策略**和**跨节点操作**这些边界情况。
+
+测试逻辑：
+
+
+
 
 ### 5.页表的复制与销毁
-
 
 
 
