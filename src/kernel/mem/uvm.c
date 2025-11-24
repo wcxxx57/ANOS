@@ -405,13 +405,12 @@ uint64 uvm_ustack_grow(pgtbl_t pgtbl, uint64 old_ustack_npage, uint64 fault_addr
 
 // 递归释放 页表占用的物理页 和 页表管理的物理页
 // ps: 顶级页表level = 3
+extern char trampoline[];
 static void destroy_pgtbl(pgtbl_t pgtbl, uint32 level)
 {
     if (pgtbl == NULL) return;
 
-    // 每页页表包含的条目数
-    int entries = PGSIZE / sizeof(pte_t);
-
+    int entries = PGSIZE / sizeof(pte_t); // 每页页表包含的条目数
     for (int i = 0; i < entries; i++) {
         pte_t pte = pgtbl[i];
         if (!(pte & PTE_V)) continue; // 无效条目跳过
@@ -419,17 +418,17 @@ static void destroy_pgtbl(pgtbl_t pgtbl, uint32 level)
         uint64 pa = (uint64)PTE_TO_PA(pte);
         int flags = PTE_FLAGS(pte);
 
-        // 如果这是叶子（具有 R/W/X 权限），释放对应的物理页
-        if (level == 0 || (flags & (PTE_R | PTE_W | PTE_X))) {
-            // 叶子映射到物理页（普通页面或大页），释放物理页
-            pmem_free(pa, false);
+        // 如果这是叶子（具有 R/W/X 权限）（普通页面或大页），释放对应的物理页
+        if (level == 1 || (flags & (PTE_R | PTE_W | PTE_X))) {
+            if (pa != (uint64)trampoline) { // TRAMPOLINE页面是全局共享的，不能释放
+                pmem_free(pa, false);
+            }
         } else {
-            // 非叶子：这是一个下一层页表的物理页
-            // 递归销毁下一层页表，然后释放该页表页
+            // 非叶子：递归销毁下一层页表
             destroy_pgtbl((pgtbl_t)pa, level - 1);
-            pmem_free(pa, false);
         }
     }
+    pmem_free((uint64)pgtbl, true); // 释放当前页表页（在内核区域）
 }
 
 // 页表销毁
@@ -467,16 +466,16 @@ static void copy_range(pgtbl_t old, pgtbl_t new, uint64 begin, uint64 end)
 // 拷贝的页表管理的物理页是原来页表的复制品
 void uvm_copy_pgtbl(pgtbl_t old, pgtbl_t new, uint64 heap_top, uint64 ustack_npage, mmap_region_t *mmap)
 {
-    // 1) 复制用户 [0, heap_top) 区域（code/data/heap）
-    if (heap_top > 0) {
-        uint64 begin = 0;
-        uint64 end = heap_top;
+    // 复制用户 [PGSIZE, heap_top) 区域（code/data/heap）
+    if (heap_top > PGSIZE) {
+        uint64 begin = PGSIZE;
+        uint64 end = ((heap_top + PGSIZE - 1) / PGSIZE) * PGSIZE; // 向上取整到页边界
         if (end > begin) {
             copy_range(old, new, begin, end);
         }
     }
 
-    // 2) 复制 mmap 链表所描述的离散映射区域
+    // 复制 mmap 链表所描述的离散映射区域
     mmap_region_t *m = mmap;
     while (m != NULL) {
         uint64 begin = m->begin;
@@ -487,7 +486,7 @@ void uvm_copy_pgtbl(pgtbl_t old, pgtbl_t new, uint64 heap_top, uint64 ustack_npa
         m = m->next;
     }
 
-    // 3) 复制用户栈区域（从 TRAPFRAME - ustack_npage*PGSIZE 到 TRAPFRAME）
+    // 复制用户栈区域（从 TRAPFRAME - ustack_npage*PGSIZE 到 TRAPFRAME）
     if (ustack_npage > 0) {
         uint64 begin = TRAPFRAME - ustack_npage * PGSIZE;
         uint64 end = TRAPFRAME;
