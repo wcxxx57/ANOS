@@ -178,3 +178,70 @@ uint64 sys_munmap()
 
     return 0;
 }
+
+
+/*
+    测试页表复制与销毁
+    成功返回0
+*/
+static pgtbl_t test_pgtbl = NULL;
+uint64 sys_test_pgtbl()
+{
+    uint32 choice;
+    arg_uint32(0, &choice); 
+
+    proc_t *p = myproc();
+    switch (choice) {
+        case 0: // 查询当前页表
+            printf("Query Current Page Table：\n");
+            vm_print(p->pgtbl);
+            break;
+
+        case 1: // 复制页表
+            printf("Copy Page Table：\n");
+            
+            // 分配一个新的顶级页表页
+            test_pgtbl = (pgtbl_t)pmem_alloc(true);
+
+            // 执行复制 (不包括 TRAMPOLINE 和 TRAPFRAME)
+            printf("Copying page table from %p to %p...\n", p->pgtbl, test_pgtbl);
+            uvm_copy_pgtbl(p->pgtbl, test_pgtbl, p->heap_top, p->ustack_npage, p->mmap);
+            
+            // 补充映射 TRAMPOLINE (共享，重映射即可)
+            pte_t *pte = vm_getpte(p->pgtbl, TRAMPOLINE, false);
+            assert(pte != NULL && (*pte & PTE_V), "sys_test_pgtbl: TRAMPOLINE not mapped in original pgtbl");
+            vm_mappages(test_pgtbl, TRAMPOLINE, PTE_TO_PA(*pte), PGSIZE, PTE_FLAGS(*pte));
+
+            // 补充映射 TRAPFRAME (私有，需分配新页并拷贝)
+            pte = vm_getpte(p->pgtbl, TRAPFRAME, false);
+            assert(pte != NULL && (*pte & PTE_V), "sys_test_pgtbl: TRAPFRAME not mapped in original pgtbl");
+            uint64 old_pa = PTE_TO_PA(*pte);
+            uint64 new_pa = (uint64)pmem_alloc(false);
+            assert(new_pa != 0, "sys_test_pgtbl: pmem_alloc for new trapframe failed");
+            memmove((void*)new_pa, (void*)old_pa, PGSIZE);
+            vm_mappages(test_pgtbl, TRAPFRAME, new_pa, PGSIZE, PTE_FLAGS(*pte));
+
+            // 打印新页表，检查是否一致
+            printf("Copied New Page Table:\n");
+            vm_print(test_pgtbl);
+            break;
+
+        case 2: // 销毁页表
+            printf("Destroy Copied Page Table:\n");
+            if (test_pgtbl == NULL) {
+                printf("Error Test: No copied page table to destroy.\n");
+                return (uint64)-1;
+            }
+            printf("Destroying page table at PA: %p\n", test_pgtbl);
+            uvm_destroy_pgtbl(test_pgtbl);
+            test_pgtbl = NULL;
+            printf("Destroy completed.\n");
+            break;
+
+        default:
+            printf("sys_test_pgtbl: Unknown choice %d\n", choice);
+            return (uint64)-1;
+    }
+
+    return 0;
+}
