@@ -29,7 +29,6 @@ void trap_user_handler()
     uint64 sepc = r_sepc();     
     uint64 sstatus = r_sstatus();
     uint64 scause = r_scause();
-    int fromU = ((sstatus & SSTATUS_SPP) == 0);  // 1 表示来自 U 态
 
     tf->user_to_kern_epc = sepc;
 
@@ -53,36 +52,8 @@ void trap_user_handler()
         switch (trap_id) {
             case 8: // Environment call from U-mode (ecall)
             {
-                if (!fromU) panic("ecall not from user");
-                uint64 num = tf->a7; // 系统调用号
-                uint64 ret = 0;
-                switch (num) {
-                    case SYS_copyin:
-                        ret = sys_copyin();
-                        break;
-                    case SYS_copyout:
-                        ret = sys_copyout();
-                        break;
-                    case SYS_copyinstr:
-                        ret = sys_copyinstr();
-                        break;
-                    case SYS_brk:
-                        ret = sys_brk();
-                        break;
-                    case SYS_mmap:
-                        ret = sys_mmap();
-                        break;
-                    case SYS_munmap:
-                        ret = sys_munmap();
-                        break;
-                    case SYS_test_pgtbl:
-                        ret = sys_test_pgtbl();
-                        break;
-                    default://! 其余系统调用暂未实现，直接报错
-                        panic("trap_user_handler: unknown syscall");
-                }
-                tf->a0 = ret; // 系统调用返回值写入 a0
-                tf->user_to_kern_epc += 4; // 系统调用返回时，PC 应该是 sepc + 4（类似中断）
+                syscall();
+                tf->user_to_kern_epc += 4; // 系统调用返回时,PC=sepc + 4（类似中断）
                 break;
             }
             case 13:
