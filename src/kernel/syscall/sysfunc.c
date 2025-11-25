@@ -169,6 +169,7 @@ uint64 sys_munmap()
     uint32 npages = len / PGSIZE;
     uvm_munmap(start, npages);
 
+    // 调试
     proc_t *p = myproc();
     printf("sys_munmap: start = %p, len = 0x%x\n", (void *)start, len);
     uvm_show_mmaplist(p->mmap);

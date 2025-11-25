@@ -7,12 +7,12 @@ static mmap_region_node_t list_head;
 static spinlock_t list_lk;
 
 // 初始化上述三个数据结构
+// 初始化仓库
 void mmap_init()
 {
-    // 初始化仓库
     spinlock_init(&list_lk, "mmap_region_node_list_lock");
 
-    // 将所有节点连成单链表，形成仓库
+    // 将所有节点连成单链表
     list_head.next = NULL;
     for (int i = 0; i < N_MMAP; i++)
     {

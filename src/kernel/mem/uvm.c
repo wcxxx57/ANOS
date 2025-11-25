@@ -184,10 +184,12 @@ uint64 uvm_mmap(uint64 begin, uint32 npages, int perm)
         // 查找 mmap 链表的插入位置：mmap 是按 begin 升序排列的
         while (curr != NULL){
             if (curr->begin >= begin + len) {
-                break; // 找到插入点：prev < new < curr
+            // 找到插入点：prev < new < curr
+                break;
             }
             if (curr->begin + curr->npages * PGSIZE > begin) {
-                panic("uvm_mmap: overlapping mmap region"); // 与现有区域重叠
+            // 与现有区域重叠：不允许！
+                panic("uvm_mmap: overlapping mmap region"); 
             }
             prev = curr;
             curr = curr->next;
@@ -198,13 +200,13 @@ uint64 uvm_mmap(uint64 begin, uint32 npages, int perm)
     mmap_region_t *node = mmap_region_alloc();
     node->begin = begin;
     node->npages = npages;
-    node->next = curr; // 先连接后继节点：插在 curr 之前
+    node->next = curr; 
 
     // 3. 插入 mmap 链表
     if (prev == NULL) {
-        p->mmap = node; // 插入到头部
+        p->mmap = node; 
     } else {
-        prev->next = node; // 再连接前驱节点：插在 prev 之后
+        prev->next = node; 
     }
 
     // 4. 尝试合并
@@ -226,9 +228,9 @@ uint64 uvm_mmap(uint64 begin, uint32 npages, int perm)
         if (!pa) {
             panic("uvm_mmap: pmem_alloc failed");
         }
-        memset(pa, 0, PGSIZE); // 清零
+        memset(pa, 0, PGSIZE); 
         uint64 va = begin + (uint64)i * PGSIZE;
-        vm_mappages(p->pgtbl, va, (uint64)pa, PGSIZE, perm); // 映射，用户态可访问
+        vm_mappages(p->pgtbl, va, (uint64)pa, PGSIZE, perm); // 映射
     }
     return begin;
 }
@@ -243,25 +245,24 @@ void uvm_munmap(uint64 begin, uint32 npages)
     mmap_region_t *prev = NULL;
     mmap_region_t *curr = p->mmap;
 
-    // 遍历 mmap 链表，处理与 [begin, end) 有交集的节点
+    // 处理每个与 [begin, end) 有交集的节点
     while (curr != NULL) {
         uint64 c_begin = curr->begin;
         uint64 c_end = curr->begin + (uint64)curr->npages * PGSIZE;
 
-        // 如果 curr 与目标区间 [begin, end) 有交集，则处理交集部分
         if (c_begin < end && c_end > begin) {
             // 交集区间：[o_begin, o_end)
             uint64 o_begin = (begin > c_begin) ? begin : c_begin;
             uint64 o_end = (end < c_end) ? end : c_end;
             uint32 o_npages = (uint32)((o_end - o_begin) / PGSIZE);
 
-            // 1. 解除交集区间的映射并释放物理页
+            // 1. 解除交集区间的映射
             for (uint32 i = 0; i < o_npages; i++) {
                 uint64 va = o_begin + (uint64)i * PGSIZE;
                 vm_unmappages(p->pgtbl, va, PGSIZE, true);
             }
 
-            // 2. 根据交集在curr中的位置，调整/分裂/删除 curr 节点
+            // 2. 根据交集在curr中的位置，处理 curr 节点
             if (o_begin > c_begin && o_end < c_end){
                 // 情况A：交集在 curr 中间 -> 分裂成两个节点
                 // 保留 curr 的前半部分，创建新节点保存后半部分
@@ -270,7 +271,6 @@ void uvm_munmap(uint64 begin, uint32 npages)
                 new_node->npages = (uint32)((c_end - o_end) / PGSIZE);
                 new_node->next = curr->next;
 
-                // 调整 curr 节点为前半部分
                 curr->npages = (uint32)((o_begin - c_begin) / PGSIZE);
                 curr->next = new_node;
 
@@ -282,9 +282,9 @@ void uvm_munmap(uint64 begin, uint32 npages)
                 // 情况B：交集覆盖整个 curr -> 删除 curr 节点
                 mmap_region_t *to_free = curr;
                 if (prev == NULL) {
-                    p->mmap = curr->next; // 删除头节点
+                    p->mmap = curr->next; 
                 } else {
-                    prev->next = curr->next; // 删除中间或尾节点
+                    prev->next = curr->next; 
                 }
                 curr = curr->next; // 继续遍历后继节点
                 mmap_region_free(to_free);
