@@ -26,8 +26,7 @@ void trap_user_handler()
     trapframe_t *tf = p->tf;
 
     // 读取关键寄存器
-    uint64 sepc = r_sepc();     
-    uint64 sstatus = r_sstatus();
+    uint64 sepc = r_sepc();
     uint64 scause = r_scause();
 
     tf->user_to_kern_epc = sepc;

@@ -6,7 +6,7 @@
 
 **丁熙妍**：完成了**任务3**（mmap_region_node 仓库管理）、**任务4**（mmap 与 munmap），以及对应的README文档。
 
-**吴晨曦**：完成了**任务1**（用户态和内核态的数据迁移）、**任务2**（堆的手动管理与栈的自动管理），以及对应的README文档
+**吴晨曦**：完成了**任务1**（用户态和内核态的数据迁移）、**任务2**（堆的手动管理与栈的自动管理），**任务5**（页表的复制和销毁）以及对应的README文档
 
 ---
 
@@ -89,7 +89,7 @@ ECNU-OSLAB-2025-TASK
 - 实现了**用户地址空间中堆的手动管理与栈的自动管理**：上次的lab4中栈空间和堆空间被简单地设置为4KB和0KB，本次实验初步实现了动态的堆栈管理，包括**堆的伸缩**和**栈缺页的处理**。
 - 实现了**mmap 节点资源的静态仓库管理**：由于目前的内核物理页分配器是以**页（4KB）为粒度**的，不适合分配小对象（如 `mmap_region_t` 节点），因此我们设计了一个基于**静态数组 + 单向空闲链表**的资源仓库，实现了 `mmap_region_t` 节点的高效复用与并发管理。
 - 实现了**用户态虚拟内存的离散映射 (mmap/munmap)**：目前已实现的堆适合管理大片连续内存，而栈无法手动释放，因此为了满足应用程序**动态申请离散内存**的需求，我们为用户进程引入了 `mmap` 链表机制（支持 `mmap + munmap`）来管理离散的虚拟内存区域，赋予了**用户进程灵活管理虚拟内存**的能力。
-- 实现了
+- 实现了**页表的复制与销毁**：完成了完成页表复制和销毁的函数`uvm_destroy_pgtbl()`和`uvm_copy_pgtbl()`为下一个**多进程实验做准备**。
 
 ---
 
@@ -103,9 +103,9 @@ ECNU-OSLAB-2025-TASK
 在initcode.c中调用syscall->进入trap_user_handler识别该系统调用，并调用sysfunc.c的对应函数进行处理->在sysfunc.c的对应函数中获取参数，并调用uvm.c中的对应函数进行实际拷贝
 ```
 
-因此我所做的就是在[trap_user.c](src/kernel/trap/trap_user.c)中的`trap_user_handler`函数的ecall case中又加了这三个系统调用的case，然后在uvm.c和sysfunc.c中实现了对应的处理函数
+因此我所做的就是在uvm.c和sysfunc.c中实现了对应的处理函数
 
-#### （1）uvm.c
+#### （1）uvm.c中的支撑函数
 
 在[uvm.c](src/kernel/mem/uvm.c)的`uvm_copyin`，`uvm_copyout`和`uvm_copyin_str`函数中，我主要完成的事就是**使用`memmove`函数来执行拷贝**，`memmove`函数原型：
 
@@ -125,7 +125,7 @@ void *memmove(void *dest, const void *src, size_t n);
 
 - 数据传递的**src和dst 不一定是page-aligned**的问题，拷贝时不能直接整页大小的拷贝，可能会**因为不对齐而跨页从而拷贝错误**，于是我首先通过计算页内偏移和剩余可拷贝字节数，**计算实际需要拷贝字节数**，再进行拷贝。
 
-#### （2）sysfunc.c
+#### （2）sysfunc.c中的系统调用函数
 
 对于[sysfunc.c](src/kernel/syscall/sysfunc.c)的`sys_copyin`，`sys_copyout`和`sys_copyinstr`这三个函数，我首先利用`arg_uint32`和`arg_uint64`**获取用户态传来的参数**（通过`proc->tf->ax`拿到这些参数），然后**调用上面在uvm.c中实现的对应的`uvm_copyxx`函数进行拷贝**，比如`sys_copyout()`如下，`sys_copyin`和`sys_copyinstr`也类似：
 
@@ -150,6 +150,8 @@ uint64 sys_copyout()
 
 测试代码在[initcode.c](src/user/initcode.c)中的对应注释部分，在sysfunc.c的函数中添加了一些调试信息，测试结果见[`pictures/test1.png`](pictures/test1.png)
 
+---
+
 ### 2.堆的手动管理与栈的自动管理
 
 #### 2.1 堆的手动管理
@@ -158,7 +160,6 @@ uint64 sys_copyout()
 
 - [sysfunc.c](src/kernel/syscall/sysfunc.c)中`sys_brk`**系统调用函数**，用于实现**用户堆空间的伸缩和查找**
 - 对应的**支撑函数**，[uvm.c](src/kernel/mem/uvm.c)中的`uvm_heap_grow`和`uvm_heap_ungrow`函数
-- 同时在[trap_user.c](src/kernel/trap/trap_user.c)中的`trap_user_handler`函数中添加一个case以**识别`sys_brk`这个系统调用**。
 
 ##### （1）uvm_heap_grow和uvm_heap_ungrow
 
@@ -249,6 +250,8 @@ if (need_pages > max_stack_pages)
 
 测试代码在[initcode.c](src/user/initcode.c)中的对应注释部分，在`trap_user_handler`中增加了一些调试性输出。测试结果见[`pictures/test2(2).png`](pictures/test2(2).png)，从输出可以看出，确实触发了缺页异常，并且拓展了对应的栈空间。
 
+---
+
 ### 3.mmap_region_node仓库管理
 
 为了支持离散内存分配（mmap），我们需要一种机制来管理 `mmap_region_t` 结构体本身。由于内核中不便使用动态内存分配（malloc），我们采用**静态资源仓库**的方式来管理这些节点。
@@ -277,7 +280,7 @@ typedef struct mmap_region_node {
 
 - **申请节点（ `mmap_region_alloc` ）**：
   从**链表头部**摘取节点，时间复杂度为 **O(1)**。
-   
+
 - **释放节点（ `mmap_region_free` ）**：
   采用**头插法**将节点归还至空闲链表，时间复杂度为 **O(1)**。
   但这里需要注意的是：如何找到 `mmap_region_t mmap` 对应的节点？
@@ -291,6 +294,7 @@ typedef struct mmap_region_node {
 #### （3）测试3：mmap_region_node 仓库管理
 
 测试逻辑：
+
 - CPU0 初始化系统及 mmap 仓库，并打印初始状态。
 - CPU0 和 CPU1 **并发竞争申请资源**：CPU0 试图申请并填充 mmap_list 的前半部分，CPU1 负责后半部分。
 - CPU0 和 CPU1 **并发竞争释放资源**：将各自持有的节点归还给仓库。
@@ -322,6 +326,8 @@ over_2 = true;
 
 但乱序情况仅是输出顺序问题，**不影响功能正确性**（乱序时：所有节点仍都能被正确分配与回收），因此我觉得可以**保留并接受**这种多核并发的随机性。
 
+---
+
 ### 4.mmap 与 munmap
 
 有了 mmap_region_node 的管理后，我们就可以实现用户态的**离散内存映射（mmap）**与**解除映射（munmap）**功能了。
@@ -330,16 +336,17 @@ over_2 = true;
 
 - **进程结构体扩展**：在 `proc_t` 中增加了 **`mmap` 字段**（`mmap_region_t *`），作为进程私有离散内存区域链表的头指针。
 - **进程初始化**：在 `proc_make_first` 创建第一个用户进程时，将 `p->mmap` 初始化为 `NULL`。
-  
+
 #### （1）sys_mmap 系统调用
 
 我在[sysfunc.c](src/kernel/syscall/sysfunc.c)中实现了`sys_mmap`函数，它是用户**请求内存**的入口。
 
 - **参数获取与检查**：获取用户传入的 `start` (起始地址) 和 `len` (长度)，并检查地址是否页对齐，长度是否大于0。
-  
+
 - **调用 uvm_mmap**：调用[uvm.c](src/kernel/mem/uvm.c)中的`uvm_mmap`函数进行实际的内存映射操作。
+
   - 这里与给出框架不同的是：我将 `uvm_mmap` 的返回值从 `void` 修改为 `uint64`（映射起始地址），这是因为：是因为当用户传入 `start = 0` 时，内核会自动分配地址，而我们需要在 `sys_mmap` 中将这个实际分配的地址返回给用户。
-  
+
     ```c
     // sys_mmap中：
     uint64 ret_addr = uvm_mmap(start, npages, perm);
@@ -355,7 +362,7 @@ over_2 = true;
 - **节点申请与插入**：调用 `mmap_region_alloc` 从仓库中申请一个新的节点，并按照**地址升序**的顺序插入到 `mmap` 链表中。
 - **物理页分配与映射**：为每个需要映射的页调用 `pmem_alloc` 分配物理页，并调用 `vm_mappages` 建立映射。
 - **相邻节点合并**：这是逻辑最复杂的部分。如果新映射的区域与链表中**前/后节点相邻**，则需要调用 `mmap_merge` 将它们合并为一个更大的节点，以**减少碎片**。
-  
+
 具体的合并逻辑如下图所示：
 
 ![alt text](pictures/merge.png)
@@ -377,19 +384,19 @@ over_2 = true;
 2. **砍头**：释放区域覆盖节点前半段 —> **修改 begin 和 npages**。
 3. **去尾**：释放区域覆盖节点后半段 —> **修改 npages**。
 4. **挖洞**：释放区域在节点中间 —> **节点分裂**，修改原节点，并**申请新节点**表示后半段。
-   
+
 这四种情况的处理逻辑如下图所示：
 
 ![alt text](pictures/munmap.png)
 
-   
+
 #### （5）测试4：mmap 与 munmap
 
 测试逻辑：
 
 - **构造与合并 (mmap)**：通过一系列非连续的申请，形成内存“孤岛”，然后申请中间区域将它们连成一片，验证**双向合并**逻辑；同时测试 `addr=0` 时的**自动分配**策略。
 - **分裂与消除 (munmap)**：对合并后的大节点进行**挖洞**、**砍头**、**去尾**以及**全删**操作，验证链表分裂与回收逻辑。
-  
+
 具体的测试流程如下图所示：
 
 ![alt text](pictures/test4.png)
@@ -445,8 +452,71 @@ over_2 = true;
 
 测试代码在[initcode.c](src/user/initcode.c)中的对应注释部分，测试结果见[`pictures/test_added1.png`](pictures/test_added1.png) - [`pictures/test_added4(3).png`](pictures/test_added4(3).png)，成功通过所有边界测试用例，验证了 `mmap` 和 `munmap` 的健壮性。
 
+---
 
 ### 5.页表的复制与销毁
+
+为了实现页表的复制和销毁，我实现了`uvm.c`中的`destroy_pgtbl`和`uvm_copy_pgtbl`函数。然后仿照前4个测试点的设计，补充了一个`sys_test_pgtbl`的临时系统调用来测试页表的复制和销毁。
+
+#### （1）destroy_pgtbl和uvm_copy_pgtbl
+
+在`destroy_pgtbl`中实现了利用**递归**释放存放数据的物理页和存放页表的物理页：
+
+- 如果遇到**存放数据的物理页**，则直接使用`pmem_free(pa,false)`进行释放
+- 如果遇到**存放页表的物理页**，则递归销毁下一次页表`destroy_pgtbl((pgtbl_t)pa, level - 1);`
+- 最后**释放当前页表（存放页表的物理页）**，`pmem_free((uint64)pgtbl, true);`
+- 需要注意的是`pmem_free`的第二个bool参数表示**要释放的物理页是否在内核区域**，数据页存放在`user_region`，调用`pmem_free`时用**false**，页表页存放在`kernel_region`，调用`pmem_free`时用**true**！
+
+在`uvm_copy_pgtbl`中实现了**页表的拷贝 (不包括 trapframe 和 trampoline)**，根据用户地址空间的不同区域的特点分成三部分处理并调用`copy_range`进行映射：
+
+- **code/data/heap区域**`[PGSIZE, heap_top)`：要注意不是从0到heap_top！因为用户地址空间中0-PGSIZE是未映射的保护页，无法复制
+
+- **mmap链表所描述的离散映射区域**：根据链表的特点逐个节点进行映射
+- **用户栈区域**`[TRAPFRAME - ustack_npage*PGSIZE,TRAPFRAME)`
+
+具体实现代码在[`uvm.c`](src/kernel/mem/uvm.c)
+
+#### （2）sys_test_pgtbl
+
+设计了一个具有**查询、复制和销毁**功能的临时系统调用函数，首先通过`arg_uint32(0, &choice);`获取参数`choice`，然后根据参数执行操作：
+
+- 若参数为0，则**打印当前页表**（用于核对复制得页表对不对）
+- 若参数为1，则**复制页表**（由于`uvm_copy_pgtbl`中没有复制 trapframe 和 trampoline，所以还要在新的页表补充这两个部分的映射，TRAMPOLINE是多个进程共享的，重映射即可；TRAPFRAME是每个用户进程私有的，需分配新页并拷贝）并**打印复制的新页表**
+- 若参数为2，则**销毁页表**，如果要销毁的页表不存在则打印对应的错误信息，销毁成功则打印成功的信息
+
+具体实现代码在[`sysfunc.c`](src/kernel/syscall/sysfunc.c)
+
+#### （3）测试5：页表的复制与销毁
+
+为了成功调用这个`sys_test_pgtbl`，我在`user/syscall_num.h`和`kernel/syscall/type.h`中首先注册了新的**系统调用号**：
+
+```c
+#define SYS_test_pgtbl 7 // 注册新的系统调用号
+```
+
+然后在`kernel/syscall`中的`method.h`和`syscall.c`的**系统调用跳转表**中也注册了该系统调用函数：
+
+```c
+// 跳转表: 系统调用号 -> 系统调用服务函数
+static uint64 (*syscalls[])(void) = {
+    [SYS_copyin] sys_copyin,
+    [SYS_copyout] sys_copyout,
+    [SYS_copyinstr] sys_copyinstr,
+    [SYS_brk] sys_brk,
+    [SYS_mmap] sys_mmap,
+    [SYS_munmap] sys_munmap,
+    [SYS_test_pgtbl] sys_test_pgtbl, // 在跳转表中补充新的系统调用
+};
+```
+
+测试逻辑：
+
+- 先**查询**当前页表
+- **复制**当前页表并打印
+- **销毁**复制的页表
+- **再次销毁**，测试销毁不存在的页表时的**错误处理**
+
+测试代码在[initcode.c](src/user/initcode.c)中的对应部分，测试结果见[`pictures/test5.png`](pictures/5.png)，测试结果显示复制的页表与查询的页表一致，成功销毁了复制的页表，再次销毁时也输出了对应的错误信息。
 
 
 ---
@@ -454,9 +524,15 @@ over_2 = true;
 ## 总结与思考
 
 - **逐层封装的设计**  
-  本次实验中 `mmap` 的调用流程非常清晰：`sys_mmap` (系统调用接口) -> `uvm_mmap` (虚拟内存逻辑) -> `mmap_region_alloc` (资源管理) -> `pmem_alloc` (物理内存分配)。   
-  这种**分层设计**不仅使得每个模块职责单一、易于维护，也使得调试变得更加容易。当出现 Bug 时，我可以快速定位是**逻辑层（uvm）**的问题还是**资源层（mmap）**的问题。
+
+  本次实验建立了完整的调用流程，基于逐层封装的设计完成了各个任务的功能和测试。由`initcode.c`中用户代码的**系统调用**，经过跳转表跳转到`sysfunc.c`中对应的**系统调用接口**，然后进入`uvm.c`提供的**虚拟内存逻辑**，再进入更为底层的**资源管理与物理内存分配函数**。
+
+  比如 `mmap` 的调用流程就非常清晰的体现了这种封层的设计：`sys_mmap` (系统调用接口) -> `uvm_mmap` (虚拟内存逻辑) -> `mmap_region_alloc` (资源管理) -> `pmem_alloc` (物理内存分配)。   
+
+  这种**分层设计**不仅使得每个模块职责单一、易于维护，也使得调试变得更加容易。当出现 Bug 时，我可以快速定位是**逻辑层（uvm）**的问题还是**系统调用层（sysfunc）**的问题。
 
 - **mmap 节点仓库的设计权衡**  
+
   在实现 `mmap` 节点仓库时，我们选择了**静态数组 + 单向链表的静态资源池**来管理节点。它实现简单且性能较好（O(1) 的申请与释放），但代价是容量固定（N_MMAP）且不够灵活。  
+
   因此在真实的操作系统内核（如 Linux）中，为了追求更好的空间利用率和可伸缩性，会引入 **`slab/kmalloc` 等复杂的动态分配器**，来管理**小对象的分配与回收**，这也是我们实验未来可以改进的方向。
