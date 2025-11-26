@@ -1,131 +1,97 @@
+// test-1: sys_getpid and sys_print
 #include "sys.h"
-
-// 与内核保持一致
-#define VA_MAX       (1ul << 38)
-#define PGSIZE       4096
-#define MMAP_END     (VA_MAX - (16 * 256 + 2) * PGSIZE)
-#define MMAP_BEGIN   (MMAP_END - 64 * 256 * PGSIZE)
 
 int main()
 {
-    // // 测试1：测试用户态与内核态的数据传递
-    // int L[5];
-    // char* s = "hello, world"; 
-    // syscall(SYS_copyout, L);
-    // syscall(SYS_copyin, L, 5);
-    // syscall(SYS_copyinstr, s);
-    // while(1);
-    // return 0;
-
-    // // 测试2.1：测试堆空间增长与收缩
-    // long long heap_top = 0;
-    // heap_top = syscall(SYS_brk, 0);
-    // heap_top = syscall(SYS_brk, heap_top + PGSIZE * 9);
-    // heap_top = syscall(SYS_brk, heap_top);
-    // heap_top = syscall(SYS_brk, heap_top - PGSIZE * 5);
-    // while(1);
-    // return 0;
-
-    // // 测试2.1：测试用户栈空间的自动增长
-    // char tmp[PGSIZE * 4];
-
-    // tmp[PGSIZE * 3] = 'h';
-    // tmp[PGSIZE * 3 + 1] = 'e';
-    // tmp[PGSIZE * 3 + 2] = 'l';
-    // tmp[PGSIZE * 3 + 3] = 'l';
-    // tmp[PGSIZE * 3 + 4] = 'o';
-    // tmp[PGSIZE * 3 + 5] = '\0';
-
-    // syscall(SYS_copyinstr, tmp + PGSIZE * 3);
-
-    // tmp[0] = 'w';
-    // tmp[1] = 'o';
-    // tmp[2] = 'r';
-    // tmp[3] = 'l';
-    // tmp[4] = 'd';
-    // tmp[5] = '\0';
-
-    // syscall(SYS_copyinstr, tmp);
-
-    // while (1);
-    // return 0;
-
-    // // 测试4：测试mmap和munmap
-    // // 建议画图理解这些地址和长度的含义
-    // // sys_mmap 测试 
-    // syscall(SYS_mmap, MMAP_BEGIN + 4 * PGSIZE, 3 * PGSIZE);
-    // syscall(SYS_mmap, MMAP_BEGIN + 10 * PGSIZE, 2 * PGSIZE);
-    // syscall(SYS_mmap, MMAP_BEGIN + 2 * PGSIZE,  2 * PGSIZE);
-    // syscall(SYS_mmap, MMAP_BEGIN + 12 * PGSIZE, 1 * PGSIZE);
-    // syscall(SYS_mmap, MMAP_BEGIN + 7 * PGSIZE, 3 * PGSIZE);
-    // syscall(SYS_mmap, MMAP_BEGIN, 2 * PGSIZE);
-    // syscall(SYS_mmap, 0, 10 * PGSIZE);
-
-    // // sys_munmap 测试
-    // syscall(SYS_munmap, MMAP_BEGIN + 10 * PGSIZE, 5 * PGSIZE);
-    // syscall(SYS_munmap, MMAP_BEGIN, 10 * PGSIZE);
-    // syscall(SYS_munmap, MMAP_BEGIN + 17 * PGSIZE, 2 * PGSIZE);
-    // syscall(SYS_munmap, MMAP_BEGIN + 15 * PGSIZE, 2 * PGSIZE);
-    // syscall(SYS_munmap, MMAP_BEGIN + 19 * PGSIZE, 2 * PGSIZE);
-    // syscall(SYS_munmap, MMAP_BEGIN + 22 * PGSIZE, 1 * PGSIZE);
-    // syscall(SYS_munmap, MMAP_BEGIN + 21 * PGSIZE, 1 * PGSIZE);
-
-    // // 测试4补充测试
-    // // 1. 参数检查测试 
-    // // 预期：内核应拒绝非法参数，且不应 panic
-    // syscall(SYS_mmap, MMAP_BEGIN + 100, PGSIZE); // 错误：地址非页对齐
-    // syscall(SYS_mmap, MMAP_BEGIN, PGSIZE - 1);   // 错误：长度非页对齐
-    // syscall(SYS_mmap, MMAP_BEGIN, 0);            // 错误：长度为0
-
-    // // 2. 重叠检测测试
-    // // 预期：第一次申请成功，第二次申请应失败，panic 卡死
-    // syscall(SYS_mmap, MMAP_BEGIN, PGSIZE);       // 成功：申请一页
-    // syscall(SYS_mmap, MMAP_BEGIN, PGSIZE);       // 失败：重叠
-    // syscall(SYS_munmap, MMAP_BEGIN, PGSIZE);     // 清理
-
-    // // 3. 自动分配策略验证 
-    // typedef unsigned long long uint64;
-    // // 构造布局: [P1] [P2] [P3]
-    // uint64 p1 = syscall(SYS_mmap, 0, PGSIZE);
-    // uint64 p2 = syscall(SYS_mmap, 0, PGSIZE);
-    // uint64 p3 = syscall(SYS_mmap, 0, PGSIZE);
-    
-    // // 制造空洞: [P1] [Hole] [P3]
-    // syscall(SYS_munmap, p2, PGSIZE);
-
-    // // 再次申请: 预期内核应优先填补 P2 的空洞 (First-Fit)，而不是在 P3 后面分配
-    // uint64 p_new = syscall(SYS_mmap, 0, PGSIZE);
-    
-    // // 清理所有
-    // syscall(SYS_munmap, p1, PGSIZE);
-    // syscall(SYS_munmap, p_new, PGSIZE); // 如果 p_new == p2，这里能正常释放
-    // syscall(SYS_munmap, p3, PGSIZE);
-
-    // // 4. 跨节点解除映射
-    // // 这是一个复杂场景：一次 munmap 操作跨越多个不连续的节点
-    // // 构造: Node A [0, 2) ... Node B [3, 5)  (单位: Page)
-    // syscall(SYS_mmap, MMAP_BEGIN, 2 * PGSIZE);
-    // syscall(SYS_mmap, MMAP_BEGIN + 3 * PGSIZE, 2 * PGSIZE);
-
-    // // 释放 [1, 4): 跨越了 A 的尾部 (Page 1) 和 B 的头部 (Page 3)
-    // // 预期结果: 
-    // // Node A 被去尾 -> 剩 [0, 1)
-    // // Node B 被砍头 -> 剩 [4, 5)
-    // // 中间的空洞区域 [2, 3) 本来就没映射，munmap 应静默忽略
-    // syscall(SYS_munmap, MMAP_BEGIN + 1 * PGSIZE, 3 * PGSIZE);
-
-    // // 清理剩余碎片
-    // syscall(SYS_munmap, MMAP_BEGIN, 1 * PGSIZE);             // 清理 A 的剩余
-    // syscall(SYS_munmap, MMAP_BEGIN + 4 * PGSIZE, 1 * PGSIZE); // 清理 B 的剩余
-
-    // while(1);
-    // return 0;
-
-    // 测试5：页表复制与销毁
-    syscall(SYS_test_pgtbl, 0); // 查询当前页表
-    syscall(SYS_test_pgtbl, 1); // 复制页表
-    syscall(SYS_test_pgtbl, 2); // 销毁复制的页表
-    syscall(SYS_test_pgtbl, 2); // 再次销毁，测试错误处理
-    while(1);
-    return 0;
+	int pid = syscall(SYS_getpid);
+	if (pid == 1) {
+		syscall(SYS_print_str, "\nproczero: hello ");
+		syscall(SYS_print_str, "world!\n");
+	}
+	while (1);	
 }
+
+
+// test-2: fork
+// #include "sys.h"
+
+// int main()
+// {
+// 	syscall(SYS_print_str, "level-1!\n");
+// 	syscall(SYS_fork);
+// 	syscall(SYS_print_str, "level-2!\n");
+// 	syscall(SYS_fork);
+// 	syscall(SYS_print_str, "level-3!\n");
+// 	while(1);
+// }
+
+
+// test-3: fork wait exit 综合测试
+// #include "sys.h"
+
+// #define PGSIZE 4096
+// #define VA_MAX (1ul << 38)
+// #define MMAP_END (VA_MAX - (2 + 16 * 256) * PGSIZE)
+// #define MMAP_BEGIN (MMAP_END - 64 * 256 * PGSIZE)
+
+// int main()
+// {
+// 	int pid, i;
+// 	char *str1, *str2, *str3 = "STACK_REGION\n\n";
+// 	char *tmp1 = "MMAP_REGION\n", *tmp2 = "HEAP_REGION\n";
+	
+// 	str1 = (char*)syscall(SYS_mmap, MMAP_BEGIN, PGSIZE);
+// 	for (i = 0; tmp1[i] != '\0'; i++)
+// 		str1[i] = tmp1[i];
+// 	str1[i] = '\0';	
+
+// 	str2 = (char*)syscall(SYS_brk, 0);
+// 	syscall(SYS_brk, (long long int)str2 + PGSIZE);
+// 	for (i = 0; tmp2[i] != '\0'; i++)
+// 		str2[i] = tmp2[i];
+// 	str2[i] = '\0';	
+
+// 	syscall(SYS_print_str, "\n--------test begin--------\n");
+// 	pid = syscall(SYS_fork);
+
+// 	if (pid == 0) { // 子进程
+// 		syscall(SYS_print_str, "child proc: hello!\n");
+// 		syscall(SYS_print_str, str1);
+// 		syscall(SYS_print_str, str2);
+// 		syscall(SYS_print_str, str3);
+// 		syscall(SYS_exit, 1234);
+// 	} else { // 父进程
+// 		int exit_state = 0;
+// 		syscall(SYS_wait, &exit_state);
+// 		syscall(SYS_print_str, "parent proc: hello!\n");
+// 		syscall(SYS_print_int, pid);
+// 		if (exit_state == 1234)
+// 			syscall(SYS_print_str, "good boy!\n");
+// 		else
+// 			syscall(SYS_print_str, "bad boy!\n"); 
+// 	}
+
+// 	syscall(SYS_print_str, "--------test end----------\n");
+
+// 	while (1);
+	
+// 	return 0;
+// }
+
+// test-4: sleep
+// #include "sys.h"
+
+// int main()
+// {
+// 	int pid = syscall(SYS_fork);
+// 	if (pid == 0) {
+// 		syscall(SYS_print_str, "Ready to sleep!\n");
+// 		syscall(SYS_sleep, 30);
+// 		syscall(SYS_print_str, "Ready to exit!\n");
+// 		syscall(SYS_exit, 0);
+// 	} else {
+// 		syscall(SYS_wait, 0);
+// 		syscall(SYS_print_str, "Child exit!\n");
+// 	}
+// 	while(1);
+// }

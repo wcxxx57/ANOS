@@ -5,3 +5,10 @@
 #define SYS_mmap 5      // 创建内存映射
 #define SYS_munmap 6    // 解除内存映射
 #define SYS_test_pgtbl 7 // 测试页表的复制与销毁
+#define SYS_print_str 8     // 打印字符串
+#define SYS_print_int 9     // 打印32位整数
+#define SYS_getpid 10        // 获取当前进程的ID
+#define SYS_fork 11          // 进程复制
+#define SYS_wait 12          // 等待子进程退出
+#define SYS_exit 13          // 进程退出
+#define SYS_sleep 14        // 进程睡眠一段时间

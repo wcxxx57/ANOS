@@ -9,6 +9,13 @@ static uint64 (*syscalls[])(void) = {
     [SYS_mmap] sys_mmap,
     [SYS_munmap] sys_munmap,
     [SYS_test_pgtbl] sys_test_pgtbl,
+    [SYS_print_str] sys_print_str,
+    [SYS_print_int] sys_print_int,
+    [SYS_getpid] sys_getpid,
+    [SYS_fork] sys_fork,
+    [SYS_wait] sys_wait,
+    [SYS_exit] sys_exit,
+    [SYS_sleep] sys_sleep,
 };
 
 // 基于系统调用表的请求跳转
