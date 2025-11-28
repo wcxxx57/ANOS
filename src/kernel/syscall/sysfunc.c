@@ -253,7 +253,16 @@ uint64 sys_test_pgtbl()
 */
 uint64 sys_print_str()
 {
+    uint64 addr;
+    arg_uint64(0, &addr); // 获取字符串地址
 
+    char buf[256];
+    // 从用户空间拷贝字符串到内核空间
+    uvm_copyin_str(myproc()->pgtbl, (uint64)buf, addr, 256);
+
+    printf("%s", buf);
+
+    return 0;
 }
 
 /*
@@ -263,7 +272,10 @@ uint64 sys_print_str()
 */
 uint64 sys_print_int()
 {
-
+    int num;
+    arg_uint32(0, (uint32 *)&num); // 获取整数参数
+    printf("%d", num);
+    return 0;
 }
 
 /*
@@ -272,7 +284,7 @@ uint64 sys_print_int()
 */
 uint64 sys_fork()
 {
-
+    return proc_fork();
 }
 
 /*
@@ -281,7 +293,9 @@ uint64 sys_fork()
 */
 uint64 sys_wait()
 {
-
+    uint64 addr_exit_state;
+    arg_uint64(0, &addr_exit_state); // 获取接收退出状态的用户地址
+    return proc_wait(addr_exit_state);
 }
 
 /*
@@ -291,7 +305,10 @@ uint64 sys_wait()
 */
 uint64 sys_exit()
 {
-
+    int exit_code;
+    arg_uint32(0, (uint32 *)&exit_code); // 获取退出码
+    proc_exit(exit_code);
+    return 0; // 不会执行到这里
 }
 
 /*
@@ -301,7 +318,10 @@ uint64 sys_exit()
 */
 uint64 sys_sleep()
 {
-
+    uint32 ntick;
+    arg_uint32(0, &ntick); // 获取睡眠的tick数
+    timer_wait((uint64)ntick);
+    return 0;
 }
 
 /*
@@ -309,5 +329,5 @@ uint64 sys_sleep()
 */
 uint64 sys_getpid()
 {
-
+    return (uint64)(myproc()->pid);
 }

@@ -168,17 +168,21 @@ void kvm_init()
                 PTE_R | PTE_W | PTE_X);  // 可读写执行
 
     // === Step 6: 映射每个进程的内核栈 (为每个 CPU 分配真实的物理页并映射) ===
-    void *kstack_pa = pmem_alloc(true);  // 分配物理页
-    if (!kstack_pa) {
-        panic("kvm_init: cannot allocate physical page for kstack of pid 0");
-    }
-    memset(kstack_pa, 0, PGSIZE);  
+    // 遍历所有可能的进程槽位 (N_PROC)，为它们预先分配内核栈
+    for (int i = 0; i < N_PROC; i++) {
+        void *kstack_pa = pmem_alloc(true);  // 分配物理页
+        if (!kstack_pa) {
+            panic("kvm_init: cannot allocate physical page for kstack of proc");
+        }
+        memset(kstack_pa, 0, PGSIZE);  
 
-    vm_mappages(kernel_pgtbl, 
-                KSTACK(0),
-                (uint64)kstack_pa,
-                PGSIZE, // 先只映射一页
-                PTE_R | PTE_W);
+        // 映射到刚刚分配的物理页
+        vm_mappages(kernel_pgtbl, 
+                    KSTACK(i),
+                    (uint64)kstack_pa,
+                    PGSIZE, // 先只映射一页
+                    PTE_R | PTE_W);
+    }
 }
 
 // 每个CPU都需要调用, 从不使用页表切换到使用内核页表
