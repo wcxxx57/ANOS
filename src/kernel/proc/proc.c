@@ -245,26 +245,28 @@ int proc_fork()
     proc_t *child = proc_alloc();
     if (!child) return -1;
 
-    // 继承基本属性与上下文
-    //strncpy(child->name, parent->name, sizeof(child->name)-1);
-    child->parent = parent;
-    child->exit_code = 0;
+    // 设置进程名字
+    // strncpy(child->name, parent->name, sizeof(child->name)-1);
 
-    // 为子进程创建独立的 trapframe 与用户页表
+    // 复制trapframe
     trapframe_t *tf = (trapframe_t *)pmem_alloc(true);
     if (!tf) { spinlock_release(&child->lk); return -1; }
-    memset(tf, 0, PGSIZE);
+    *tf = *parent->tf;
+    tf->user_to_kern_epc += 4;
+    tf->a0=0;
+
+    // 填充子进程结构体
     child->tf = tf;
+    child->parent = parent;
+    child->exit_code = 0;
     child->pgtbl = proc_pgtbl_init((uint64)tf);
+    child->heap_top = parent->heap_top;
+    child->ustack_npage = parent->ustack_npage;
+    child->state = RUNNABLE;
 
     // 复制页表
     uvm_copy_pgtbl(parent->pgtbl, child->pgtbl, parent->heap_top, parent->ustack_npage, parent->mmap);
-
-    // 子进程返回值为0
-    child->tf->a0 = 0;
-
-    // 置为 RUNNABLE 并解锁
-    child->state = RUNNABLE;
+    
     int pid = child->pid;
     spinlock_release(&child->lk);
     return pid;

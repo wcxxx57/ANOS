@@ -66,8 +66,12 @@ void trap_user_handler()
                 printf("ustack_npage: %d -> %d\n", old_ustack_npage, ret);
                 break;
             }
-            //! 其余异常类型暂时不处理，直接报错
+            //! 其余异常类型暂时不处理，直接报错并输出信息
             default:
+                printf("!!! PANIC INFO !!!\n");
+                printf("scause = %p (trap_id = %d)\n", scause, trap_id);
+                printf("sepc   = %p\n", sepc);
+                printf("stval  = %p\n", r_stval());
                 panic("trap_user_handler: unknown exception");
         }
     }
