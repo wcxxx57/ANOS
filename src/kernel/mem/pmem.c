@@ -90,7 +90,7 @@ void pmem_free(uint64 page, bool in_kernel)
     }
 
     // 检查page的合法性
-    if (page % PGSIZE != 0 || page < ar->begin || page >= ar->end)
+    if (page % PGSIZE != 0 || page < ar->begin || page > ar->end)
     {
         panic("pmem_free: invalid page");
     }

@@ -110,16 +110,11 @@ void proc_free(proc_t *p)
         p->pgtbl = NULL;
     }
 
-    // 释放 trapframe 物理页（由 pmem_alloc(true) 分配）
-    if (p->tf) {
-        pmem_free((uint64)p->tf, true);
-        p->tf = NULL;
-    }
-
     // 清空结构体并置为 UNUSED
     memset(p->name, 0, sizeof(p->name));
     p->pid = 0;
     p->parent = NULL;
+    p->tf = NULL;
     p->exit_code = 0;
     p->sleep_space = NULL;
     p->pgtbl = NULL;
@@ -174,11 +169,10 @@ void proc_make_first()
     // 通过通用分配接口申请 proczero（返回时持有锁）
     proc_t *p = proc_alloc();
     if (!p) panic("proc_make_first: proc_alloc failed");
-    // proczero 固定为 pid=1
-    p->pid = 1;
+    p->pid = 1; // proczero 固定为 pid=1
 
     // 1. 申请trapframe的物理页
-    trapframe_t *tf = (trapframe_t *)pmem_alloc(true);
+    trapframe_t *tf = (trapframe_t *)pmem_alloc(false);
     if (!tf) {
         panic("proc_make_first: pmem_alloc for trapframe failed");
     }
@@ -249,7 +243,7 @@ int proc_fork()
     // strncpy(child->name, parent->name, sizeof(child->name)-1);
 
     // 复制trapframe
-    trapframe_t *tf = (trapframe_t *)pmem_alloc(true);
+    trapframe_t *tf = (trapframe_t *)pmem_alloc(false);
     if (!tf) { spinlock_release(&child->lk); return -1; }
     *tf = *parent->tf;
     tf->user_to_kern_epc += 4;
@@ -283,6 +277,7 @@ void proc_yield()
     spinlock_acquire(&p->lk);
     p->state = RUNNABLE;
     proc_sched(); // 保持持锁切换
+    spinlock_release(&p->lk);
 }
 
 /*
@@ -403,7 +398,7 @@ void proc_sleep(void *sleep_space, spinlock_t *lock)
     p->state = SLEEPING;
 
     // 释放外部锁
-    spinlock_release(lock);
+    //todo spinlock_release(lock);
 
     // 切到调度器
     proc_sched();
@@ -445,7 +440,7 @@ void proc_sched()
     // 切回原生进程
     c->proc = NULL; 
     swtch(&p->ctx, &c->ctx);
-    spinlock_release(&p->lk);
+    //todo spinlock_release(&p->lk);
 }
 
 /* 
