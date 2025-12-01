@@ -497,3 +497,43 @@ int main()
 最重要的, 我们将**基于磁盘自底向上地构建文件系统**, 并赋能内存管理和进程管理模块
 
 **欢迎来到文件系统的世界!**
+
+
+修复：
+
+test2:
+
+根据调试结果：
+
+![alt text](pictures/test2_bug1.png)
+
+- scause = 12 (0xc): Instruction Page Fault（取指缺页异常）。
+- sepc = 0: 异常发生时的程序计数器（PC）为 0。
+- stval = 0: 导致异常的虚拟地址为 0。
+结论：子进程试图从地址 0x0 处取指令执行，但该地址无效（未映射或不可执行）。
+
+发现原因是：
+在 proc_fork 中，你虽然复制了 trapframe，但忘记了复制 tf->user_to_kern_epc。
+
+- 父进程调用 fork 时，其 tf->user_to_kern_epc 保存的是 ecall 指令的地址。
+- 子进程被创建时，tf 是新分配并清零的 (memset(tf, 0, PGSIZE))。
+- 如果不把父进程的 epc 拷给子进程，子进程的 epc 就是 0。
+- 当子进程被调度运行并返回用户态时 (trap_user_return)，它会跳转到 epc (即 0) 处执行，导致取指缺页异常。
+
+修复：
+
+```c
+// memset(tf, 0, PGSIZE); 错误！
+// 【修复1】直接拷贝父进程的 trapframe 内容，而不是清零
+*tf = *parent->tf; 
+// 【修复2】子进程的 epc 需要 +4，跳过当前的 ecall 指令
+// 否则子进程醒来后会再次执行 ecall，导致无限递归 fork
+tf->user_to_kern_epc += 4;
+```
+
+然后：
+
+![alt text](pictures/test2_bug2.png)
+
+可以看到：子进程也跑起来了：打印了 level-2! -> level-3!
+但最终依然发生了缺页，发现原因是：
