@@ -395,6 +395,7 @@ void proc_sleep(void *sleep_space, spinlock_t *lock)
         spinlock_release(lock);
     }
     p->sleep_space = sleep_space;
+    printf("proc %d is sleeping!\n", p->pid);
     p->state = SLEEPING;
 
     // 释放外部锁
@@ -404,9 +405,14 @@ void proc_sleep(void *sleep_space, spinlock_t *lock)
     proc_sched();
 
     // 被唤醒后，清理睡眠位置并释放自身锁，随后重新获取外部锁
+    printf("proc %d is wakeup!\n", p->pid);
     p->sleep_space = NULL;
-    spinlock_release(&p->lk);
-    spinlock_acquire(lock);
+
+    // 恢复原样
+    if (lock != &p->lk) {
+        spinlock_release(&p->lk);
+        spinlock_acquire(lock);
+    }
 }
 
 /*
@@ -453,6 +459,8 @@ void proc_scheduler()
     cpu_t *c = mycpu();
     //* printf("proc_scheduler: CPU %d started\n", mycpuid());
     for (;;) {
+        // 开启中断，否则所有进程 sleep 时 CPU 会死锁在关中断状态！
+        intr_on(); 
         c->proc = NULL;
         for (int i = 0; i < N_PROC; i++) {
             proc_t *p = &proc_list[i];

@@ -536,4 +536,30 @@ tf->user_to_kern_epc += 4;
 ![alt text](pictures/test2_bug2.png)
 
 可以看到：子进程也跑起来了：打印了 level-2! -> level-3!
-但最终依然发生了缺页，发现原因是：
+但最终依然发生了缺页，发现原因是：没有复制父进程的堆栈和堆顶指针，导致子进程访问了未映射的地址。
+
+```c
+// 【修复3】复制堆栈和堆顶指针
+child->heap_top = parent->heap_top;
+child->ustack_npage = parent->ustack_npage;
+```
+
+test4:
+
+只输出了 Ready to sleep! 
+
+![alt text](pictures/test4_bug1.png)
+
+发现是因为：proc_scheduler中没有开启中断，导致所有进程sleep时CPU死锁在关中断状态，无法响应时钟中断唤醒进程。
+
+```c
+void proc_scheduler()
+{
+    cpu_t *c = mycpu();
+    for (;;) {
+        // 【修复】开启中断，否则所有进程 sleep 时 CPU 会死锁在关中断状态
+        intr_on(); 
+    ...
+    }
+}
+```

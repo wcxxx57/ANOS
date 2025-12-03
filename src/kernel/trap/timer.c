@@ -56,9 +56,10 @@ void timer_update()
     // ticks++ (保证原子性)
     spinlock_acquire(&sys_timer.lk);
     sys_timer.ticks++;
+    spinlock_release(&sys_timer.lk);
+
     // 唤醒所有在 sys_timer 上睡眠的进程
     proc_wakeup((void *)&sys_timer);
-    spinlock_release(&sys_timer.lk);
 }
 
 // 获取滴答数量 (不把sys_timer暴露出去, 只提供安全的访问接口)
