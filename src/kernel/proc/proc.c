@@ -36,18 +36,15 @@ static int alloc_pid()
 }
 
 /* 释放进程锁 + trap_user_return */
-//! √
 static void proc_return()
 {
     proc_t *p = myproc();
     // 回到用户态前释放进程锁
     spinlock_release(&p->lk); //!!!!!
-    //* printf("proc_return: pid = %d returning to user mode\n", p->pid);
     trap_user_return();
 }
 
 /* 进程模块初始化 */
-//! √
 void proc_init()
 {    
     // 初始化全局 pid 与其锁
@@ -67,7 +64,6 @@ void proc_init()
     申请一个UNUSED进程结构体(返回时带锁)
     并执行通用的初始化逻辑
 */
-//! √
 proc_t *proc_alloc()
 {
     for (int i = 0; i < N_PROC; i++) {
@@ -101,7 +97,6 @@ proc_t *proc_alloc()
     回收一个进程结构体并释放它包含的资源
     tips: 调用者需要持有进程锁
 */
-//! √
 void proc_free(proc_t *p)
 {
     // 释放用户态页表相关资源
@@ -163,7 +158,6 @@ pgtbl_t proc_pgtbl_init(uint64 trapframe)
 
 	注意: 用用户空间的地址映射需要标记 PTE_U
 */
-//! 有修改 √
 void proc_make_first()
 {
     // 通过通用分配接口申请 proczero（返回时持有锁）
@@ -210,7 +204,7 @@ void proc_make_first()
     memset(ustack_pa, 0, PGSIZE);
     vm_mappages(upgtbl,USTACK_VA,(uint64)ustack_pa,PGSIZE,PTE_R | PTE_W | PTE_U);
 
-    // 4. 填充 proczero 结构体（不进行 swtch，调度器负责首次切入）
+    // 4. 填充 proczero 结构体
     // strncpy(p->name, "proczero", sizeof(p->name)-1);
     p->pgtbl = upgtbl;
     p->heap_top = 2 * PGSIZE;
@@ -232,7 +226,6 @@ void proc_make_first()
     父进程产生子进程
     UNUSED -> RUNNABLE
 */
-//! √
 int proc_fork()
 {
     proc_t *parent = myproc();
@@ -270,7 +263,6 @@ int proc_fork()
     进程主动放弃CPU控制权
     RUNNING->RUNNABLE
 */
-//! √
 void proc_yield()
 {
     proc_t *p = myproc();
@@ -284,7 +276,6 @@ void proc_yield()
     当父进程退出时, 让它的所有子进程认proczero为父
     因为proczero永不退出, 可以回收子进程的资源
 */
-//! √
 static void proc_reparent(proc_t *parent)
 {
     for (int i = 0; i < N_PROC; i++) {
@@ -303,7 +294,6 @@ static void proc_reparent(proc_t *parent)
     由proc_exit调用
     tips: 调用者需要持有p的进程锁
 */
-//!
 static void proc_try_wakeup(proc_t *p)
 {
     proc_t *parent = p->parent;
@@ -321,7 +311,6 @@ static void proc_try_wakeup(proc_t *p)
     进程退出
     RUNNING -> ZOMBIE
 */
-//! √
 void proc_exit(int exit_code)
 {
     proc_t *p = myproc();
@@ -342,7 +331,6 @@ void proc_exit(int exit_code)
     2. 如果发现没孩子: 返回-1
     3. 如果没等到: 父进程进入睡眠状态 
 */
-//! √
 int proc_wait(uint64 user_addr)
 {
     proc_t *parent = myproc();
@@ -356,7 +344,7 @@ int proc_wait(uint64 user_addr)
             if (p->parent == parent && p->state != UNUSED) {
                 has_child = 1;
                 if (p->state == ZOMBIE) {
-                    // 拷贝退出状态到用户地址（若提供）
+                    // 拷贝退出状态到用户地址
                     if (user_addr) {
                         uvm_copyout(parent->pgtbl, user_addr, (uint64)&p->exit_code, sizeof(int));
                     }
@@ -374,10 +362,10 @@ int proc_wait(uint64 user_addr)
             return -1; // 无子进程
 
         }
-        spinlock_acquire(&parent->lk); //! 只有在决定睡觉的时候，才获取父进程锁
+        spinlock_acquire(&parent->lk);
         // 进入睡眠，等待子进程退出
         proc_sleep(parent, &parent->lk);
-        spinlock_release(&parent->lk); //! 被唤醒后释放父进程锁[因为子进程唤醒父进程时需要acquire父进程的锁]
+        spinlock_release(&parent->lk); 
     }
 }
 
@@ -385,28 +373,26 @@ int proc_wait(uint64 user_addr)
     进程等待sleep_space对应的资源, 进入睡眠状态
     RUNNING -> SLEEPING
 */
-//!
 void proc_sleep(void *sleep_space, spinlock_t *lock)
 {
     proc_t *p = myproc();
 
+    // 应对外设中断处理程序调用proc_sleep的情况
     if (lock != &p->lk) {
         spinlock_acquire(&p->lk);
         spinlock_release(lock);
     }
-    p->sleep_space = sleep_space;
-    printf("proc %d is sleeping!\n", p->pid);
-    p->state = SLEEPING;
 
-    // 释放外部锁
-    //todo spinlock_release(lock);
+    // 开始睡眠
+    p->sleep_space = sleep_space;
+    p->state = SLEEPING;
+    printf("proc %d is sleeping!\n", p->pid);
 
     // 切到调度器
     proc_sched();
 
-    // 被唤醒后，清理睡眠位置并释放自身锁，随后重新获取外部锁
+    // 被唤醒
     printf("proc %d is wakeup!\n", p->pid);
-    p->sleep_space = NULL;
 
     // 恢复原样
     if (lock != &p->lk) {
@@ -419,7 +405,6 @@ void proc_sleep(void *sleep_space, spinlock_t *lock)
     唤醒所有等待sleep_space的进程
     SLEEPING -> RUNNABLE
 */
-//!
 void proc_wakeup(void *sleep_space)
 {
     for (int i = 0; i < N_PROC; i++) {
@@ -437,7 +422,6 @@ void proc_wakeup(void *sleep_space)
     用户进程切换到调度器
     tips: 调用者保证持有当前进程的锁
 */
-//! √
 void proc_sched()
 {
     cpu_t *c = mycpu();
@@ -446,21 +430,17 @@ void proc_sched()
     // 切回原生进程
     c->proc = NULL; 
     swtch(&p->ctx, &c->ctx);
-    //todo spinlock_release(&p->lk);
 }
 
 /* 
     调度器
     RUNNABLE->RUNNING
 */
-//! √
 void proc_scheduler()
 {
     cpu_t *c = mycpu();
-    //* printf("proc_scheduler: CPU %d started\n", mycpuid());
     for (;;) {
-        // 开启中断，否则所有进程 sleep 时 CPU 会死锁在关中断状态！
-        intr_on(); 
+        intr_on(); // 开启中断，否则所有进程 sleep 时 CPU 会死锁在关中断状态！
         c->proc = NULL;
         for (int i = 0; i < N_PROC; i++) {
             proc_t *p = &proc_list[i];
@@ -471,7 +451,7 @@ void proc_scheduler()
                 c->proc = p;
                 swtch(&c->ctx, &p->ctx);
             }
-            spinlock_release(&p->lk);//??? 切回后释放proc_yield上的锁，以及unused时的释放
+            spinlock_release(&p->lk);
         }
     }
 }
