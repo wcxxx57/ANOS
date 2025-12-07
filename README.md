@@ -1,6 +1,6 @@
 # LAB-6: 单进程走向多进程——进程调度与生命周期
 
-经过之前的实验，proczero已经比较成熟了，在lab6中，我们通过“复制proczero"**产生了更多进程**，并且主要关注了两个问题：**进程调度** + **生命周期**。
+经过之前的实验，proczero已经比较成熟了，在lab6中，我们通过“复制proczero"**从单进程走向了多进程**，并且主要关注了两个问题：**进程调度** + **生命周期**。
 
 我们的分工如下：
 
@@ -86,7 +86,7 @@ ECNU-OSLAB-2025-TASK
 
 相比于上一个实验，本次实验主要增加了以下功能：
 
-- 实现了多进程的资源管理、进程调度与生命周期的维护
+- 实现了**多进程**的**资源管理、进程调度与生命周期**的维护
 - 实现了
 
 ---
@@ -102,15 +102,15 @@ ECNU-OSLAB-2025-TASK
 
 为了明确这两点，我们将本次实验中**核心的调用流程和锁的情况**梳理为下图所示：
 
-![](C:\Users\user\Desktop\proc.png)
+![](pictures/proc.png)
 
-如图所示，**原生进程**运行`proc_scheduler`，通过**循环扫描**的方式进行进程调度【图中A框】，然后通过`swtch`**切换到用户进程**，然后用户进程通过`proc_sched`**交出CPU使用权**，再通过`swtch`**切换回原生进程**【图中B框】。在我们实现的实验中，交出CPU使用权的原因可能是**时间片耗尽**（`proc_yield`）【图中C框】，**进程退出**（`proc_exit`）【图中D框】，或是**因没有子进程可回收而睡眠**（`proc_wait`和`proc_sleep`）【图中E框】等。
+如图所示，**原生进程**运行`proc_scheduler`，通过**循环扫描**的方式进行进程调度【图中A框】，然后通过`swtch`**切换到用户进程**，然后用户进程通过`proc_sched`**交出CPU使用权**，再通过`swtch`**切换回原生进程**【图中B框】。在我们实现的实验中，交出CPU使用权的原因可能是**时间片耗尽**（`proc_yield`）【图中C框】，**进程退出**（`proc_exit`）【图中D框】，或**因没有子进程可回收而睡眠**（`proc_wait`和`proc_sleep`）【图中E框】。
 
-明确了整体的框架，接下来简要介绍我们在[proc.c](src/kernel/proc/proc.c)中具体的实现：
+明确了整体的框架，接下来介绍我们在[proc.c](src/kernel/proc/proc.c)中具体的实现：
 
 #### 资源管理：进程仓库
 
-资源管理是实现多进程的**基础**，我们引入了 `proc_list` 数组作为**资源仓库**并实现了以下与**进程资源管理**相关的函数：
+资源管理是实现多进程的**基础**，我们引入了 `proc_list` 数组作为**资源仓库**并实现了以下与**进程资源管理**相关的基本函数：
 
 - `proc_init`：初始化进程锁和全局PID锁。
 - `proc_alloc`：申请一个**UNUSED**的**进程控制块（PCB）**并填充一些基本信息，包括预设**内核栈与上下文**等。这里的一个关键点是设置 `ctx.ra = (uint64)proc_return`，确保**新进程被调度时能正确返回用户态**。同时要注意申请返回时是**带锁**的！
@@ -119,30 +119,29 @@ ECNU-OSLAB-2025-TASK
 
 #### 调度机制：上下文切换循环
 
-实现了基于**循环扫描**以及基于**时间片轮转**的调度器。
+实现了**基于循环扫描**以及**基于时间片轮转**的调度器。
 
-- `proc_scheduler`：**调度器**，通过不断扫描 `proc_list`，寻找 `RUNNABLE` 的进程。找到后，通过 `swtch` 切换上下文。
-  - **锁的交接**：调度器在切换前持有进程锁 `p->lk`，切换后由被调度进程（或 `proc_sched` 返回后）负责释放。这是保证状态转换原子性的关键。
-  - **中断开启**：在扫描循环中必须开启中断（`intr_on`），**否则如果所有进程都处于 SLEEPING 状态，CPU 将死锁在关中断状态**，无法响应时钟中断来唤醒进程。
-- `proc_sched`：进程**交出CPU使用权**的通用接口。它负责修改进程状态（`c->proc = NULL`，并调用 `swtch` 切回调度器上下文。
+- `proc_scheduler`：基于循环扫描的**调度器**，通过不断扫描 `proc_list`，寻找 `RUNNABLE` 的进程。找到后，通过 `swtch` 切换上下文。
+  - **锁的交接**：调度器在切换前持有进程锁 `p->lk`，切换后由被调度进程（或 `proc_sched` 返回后）负责释放，保证状态转换原子性。
+  - **中断开启**：在扫描循环中必须开启中断（`intr_on`），**否则如果所有进程都处于 SLEEPING 状态，CPU 将死锁在关中断状态**，无法响应时钟中断来唤醒进程（原先没有注意这一点造成了错误，具体见“测试与修复”的test4）。
+- `proc_sched`：进程**交出CPU使用权**的通用接口。它负责修改进程状态（`c->proc = NULL`），并调用 `swtch` 切回调度器上下文。
 - `proc_yield`：实现了**时间片轮转**。在时钟中断处理中调用，强制将当前 `RUNNING` 的进程置为 `RUNNABLE` 并让出 CPU。
 
 #### 生命周期：初始与复制、退出与回收、睡眠与唤醒
 
-进程有五种状态：`unused`、`zombie`、`sleeping`、`runnable`、`running`，这五种状态的转化过程如下图所示：
+进程有五种状态：`unused`、`zombie`、`sleeping`、`runnable`、`running`，这五种状态通过相关函数进行转化的过程如下图所示：
 
-![](E:\status.png)
+![](pictures\status.png)
 
-与生命周期的维护相关的函数如下所示，可以分为**初始与复制**、**推出与回收**、**睡眠与唤醒**这三类：
+与生命周期的维护相关的函数如下所示，我们认为可以分为**初始与复制**、**推出与回收**、**睡眠与唤醒**这三类：
 
 - **初始与复制**
 
   进程的产生有两种方式，通过`proc_make_first`产生的的第一个进程，或通过`proc_fork`继承自父进程：
 
-  - `proc_make_first`：第一个用户进程 `proczero`。不同于 `fork` 的复制逻辑，它需要**手动**申请物理页、构建用户页表（映射 trampoline、trapframe、initcode 代码段及用户栈）、初始化 `trapframe` 和内核上下文 `ctx`，最后将其状态设置为 `RUNNABLE`，使其成为调度器启动后的第一个执行目标。
+  - `proc_make_first`：第一个用户进程 `proczero`。不同于 `fork` 的复制逻辑，它需要**手动申请**物理页、构建用户页表（映射 trampoline、trapframe、initcode 代码段及用户栈）、初始化 `trapframe` 和内核上下文 `ctx`，最后将其状态设置为 `RUNNABLE`，使其成为调度器启动后的第一个执行目标。
 
-  - `proc_fork`：实现了进程的完整复制。在进行test3的测试时发现了有以下两个要注意的地方：
-
+  - `proc_fork`：实现了进程的**完整复制**。在进行test2的测试时发现了有以下两个要注意的地方（具体内容见“测试与修复”）：
     - **元数据拷贝**：不仅要复制 `trapframe` 和页表，还**必须复制 `heap_top`、`ustack_npage` 等内存布局元数据**。若不复制，会导致孙子进程 Fork 时无法正确计算内存大小，引发**缺页异常**。
 
     - **防止Fork Bomb**：必须手动**调整子进程的 `epc += 4`**，防止子进程醒来后重复执行 fork 系统调用。
@@ -152,17 +151,17 @@ ECNU-OSLAB-2025-TASK
   `proc_exit` 与`proc_wait`配合，实现了**父子进程的同步回收**：
 
   - `proc_exit` 负责将自己标记为 `ZOMBIE` 并**唤醒父进程**；如果父进程已死，则将子进程**过继**给 `proczero`（通过`proc_reparent`）。
-  - `proc_wait` 负责回收 `ZOMBIE` 子进程的资源。为了避免忙等待，引入了 `sleep/wakeup` 机制。
+  - `proc_wait` 负责**回收 `ZOMBIE` 子进程的资源**。为了避免忙等待，引入了 **`sleep/wakeup` 机制**。
 
 - **睡眠与唤醒**
 
-  - `proc_sleep`：传入外部锁，等待sleep_space对应的资源, 并进入睡眠状态。函数内部先获取进程锁 `p->lk`，再释放传入的锁，然后切换上下文。
+  - `proc_sleep`：**传入外部锁**，并进入睡眠状态，交出CPU使用权。对于**外部锁并非自身锁**的情况（如等待磁盘读写），函数内部先获取进程锁 `p->lk`，再释放传入的锁，然后切换上下文，回来后需要先释放自身锁，再重新获取外部锁。**外部锁即为自身锁**的情况直接带着这把锁睡眠即可。
 
-    > 关于为什么`proc_sleep`一定要传入一把锁？
+    > 关于**为什么`proc_sleep`一定要传入一把锁**？
     >
-    > 原因是这是一把**外部锁**，`proc_sleep`作为一个进程睡眠等待的**通用接口**，在等待子进程的情况下，这把锁就是**自身锁**；但若是在等待磁盘读写/等待管道数据等情况下，这把锁就**不再是自身锁**。所以只有传入这把锁，才能在`proc_sleep`中释放这把外部锁！
+    > 原因是这是一把**外部锁**，`proc_sleep`作为一个进程睡眠等待的**通用接口**，虽然在等待子进程的情况下，这把锁就是**自身锁**；但若是在等待磁盘读写/等待管道数据等情况下，这把锁就**不再是自身锁**。所以只有传入这把锁，才能在`proc_sleep`中释放这把外部锁！
     >
-    > 那么为什么一定要在`proc_sleep`内释放外部锁呢？
+    > 那么**为什么一定要在`proc_sleep`内释放外部锁**？
     >
     > 原因是如果在睡眠前就放掉了这把锁，会造成**丢失唤醒**的问题：**子进程的唤醒信号**可能会在**父进程睡眠**之间的**时间窗口**内发出并被错过，导致父进程因收不到信号而永久沉睡。所以只能将这把外部锁传入`proc_sleep`，并在`proc_sleep`中获取了进程自身锁后，再释放那把外部锁，完成“**锁的接力**”，防止唤醒信号的丢失。
 
@@ -177,7 +176,7 @@ ECNU-OSLAB-2025-TASK
 
 ### test1
 
-**这是对于sys_getpid和sys_print的基础测试**，测试代码见[`initcode`](src/user/initcode.c)注释的对应部分。
+**这是对于sys_getpid和sys_print_str的基础测试**，确保用户进程能够打印字符，测试代码见[`initcode`](src/user/initcode.c)中注释的对应部分。
 
 测试通过的截图见：[`test1.png`](pictures/test1.png)
 
@@ -185,11 +184,9 @@ ECNU-OSLAB-2025-TASK
 
 **这是对于fork的测试**，测试代码见[`initcode`](src/user/initcode.c)注释的对应部分，根据代码绘制的**进程图**如下所示：预期应该输出1个level-1，2个level-2，4个level-3（部分进程的level-3可能会随机在子/父进程的level-2之前输出）
 
-![process_pic_test2](C:\Users\user\AppData\Roaming\Typora\typora-user-images\image-20251206235414488.png)
+![process_pic_test2](pictures/process_pic_test2.png)
 
-
-
-测试过程中遇到的问题：出现unknow exception！
+测试过程中遇到的问题：出现**unknow exception**！
 
 根据调试结果：
 
@@ -217,7 +214,7 @@ tf->user_to_kern_epc += 4;
 
 然后：
 
-![alt text](pictures/test2_bug2.png)
+![test2_bug2](pictures/test2_bug2.png)
 
 可以看到：子进程也跑起来了：打印了 level-2! -> level-3!
 但最终依然发生了缺页，发现原因是：**没有复制父进程的堆栈和堆顶指针**，导致子进程访问了未映射的地址。
@@ -232,9 +229,9 @@ child->ustack_npage = parent->ustack_npage;
 
 ### test3
 
-**这是对于fork，wait和exit的综合测试**，测试代码见[`initcode`](src/user/initcode.c)注释的对应部分。代码的**进程图**如下所示（除去测试前面部分的mmap和heap的打印），预期是子进程先依次输出`child_proc:hello!`、`MMAP_REGION`、`HEAP_REGION`、`STACK_REGION`，然后以退出码1234退出，父进程起初`exit_state=0`，但**经过`syscall(SYS_wait, &exit_state)`等待子进程退出（中间sleep），并在子进程推出后将其退出码写入了`exit_state`**，于是`exit_state=1234`。之后依次输出`parent_proc:hello!`、`num=2`，若程序正常执行的话应该输出`good boy!`。
+**这是对于fork，wait和exit的综合测试**，测试代码见[`initcode`](src/user/initcode.c)注释的对应部分。代码的**进程图**如下所示（除去测试前面部分的mmap和heap的打印），预期是子进程先依次输出`child_proc:hello!`、`MMAP_REGION`、`HEAP_REGION`、`STACK_REGION`，然后以退出码1234退出，父进程起初`exit_state=0`，但**经过`syscall(SYS_wait, &exit_state)`后，等待子进程退出（中间sleep），并在子进程退出后将其退出码写入`exit_state`**，于是`exit_state=1234`。之后依次输出`parent_proc:hello!`、`num=2`，若程序正常执行的话由于`exit_state`已经等于1234，**最后应该输出`good boy!`**。
 
-![image-20251207002051263](C:\Users\user\AppData\Roaming\Typora\typora-user-images\image-20251207002051263.png)
+![process_pic_test3](pictures/process_pic_test3.png)
 
 测试结果见：[`test3.png`](pictures/test3.png)，最后输出了`good boy`，其他输出也符合预期，测试通过。
 
@@ -260,5 +257,5 @@ void proc_scheduler()
 }
 ```
 
-修复后成功通过了测试，测试结果截图见：[`test4.png`](pictures/test4.png)，可以看到在子进程睡眠30个时钟周期后成功唤醒了父进程（proc1），另外由于时钟每更新一次就唤醒子进程检查自己是否睡到了30个周期，所以proc2一直在交替显示sleeping/wakeup。
+修复后成功通过了测试，测试结果截图见：[`test4.png`](pictures/test4.png)，可以看到在**子进程睡眠30个时钟周期后成功唤醒了父进程（proc1）**，另外由于时钟每更新一次就需要唤醒子进程（proc2）检查自己是否睡到了30个周期，所以proc2一直在交替显示sleeping/wakeup。
 
