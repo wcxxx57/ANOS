@@ -131,7 +131,7 @@ ECNU-OSLAB-2025-TASK
 
 进程有五种状态：`unused`、`zombie`、`sleeping`、`runnable`、`running`，这五种状态通过相关函数进行转化的过程如下图所示：
 
-![](pictures\status.png)
+![](pictures/status.png)
 
 与生命周期的维护相关的函数如下所示，我们认为可以分为**初始与复制**、**推出与回收**、**睡眠与唤醒**这三类：
 
