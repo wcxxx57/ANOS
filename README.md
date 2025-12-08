@@ -265,7 +265,9 @@ ECNU-OSLAB-2025-TASK
 
 ### test2
 
-**这是对于fork的测试**，测试代码见[`initcode`](src/user/initcode.c)注释的对应部分，根据代码绘制的**进程图**如下所示：预期应该输出1个level-1，2个level-2，4个level-3（部分进程的level-3可能会随机在子/父进程的level-2之前输出）
+**这是对于fork的测试**，测试代码见[`initcode`](src/user/initcode.c)注释的对应部分。
+
+根据代码绘制的**进程图**如下所示：预期应该输出1个level-1，2个level-2，4个level-3（部分进程的level-3可能会随机在子/父进程的level-2之前输出）。
 
 ![process_pic_test2](pictures/process_pic_test2.png)
 
@@ -312,7 +314,9 @@ child->ustack_npage = parent->ustack_npage;
 
 ### test3
 
-**这是对于fork，wait和exit的综合测试**，测试代码见[`initcode`](src/user/initcode.c)注释的对应部分。代码的**进程图**如下所示（除去测试前面部分的mmap和heap的打印），预期是子进程先依次输出`child_proc:hello!`、`MMAP_REGION`、`HEAP_REGION`、`STACK_REGION`，然后以退出码1234退出，父进程起初`exit_state=0`，但**经过`syscall(SYS_wait, &exit_state)`后，等待子进程退出（中间sleep），并在子进程退出后将其退出码写入`exit_state`**，于是`exit_state=1234`。之后依次输出`parent_proc:hello!`、`num=2`，若程序正常执行的话由于`exit_state`已经等于1234，**最后应该输出`good boy!`**。
+**这是对于fork，wait和exit的综合测试**，测试代码见[`initcode`](src/user/initcode.c)注释的对应部分。
+
+代码的**进程图**如下所示（除去测试前面部分的mmap和heap的打印），预期是子进程先依次输出`child_proc:hello!`、`MMAP_REGION`、`HEAP_REGION`、`STACK_REGION`，然后以退出码1234退出，父进程起初`exit_state=0`，但**经过`syscall(SYS_wait, &exit_state)`后，等待子进程退出（中间sleep），并在子进程退出后将其退出码写入`exit_state`**，于是`exit_state=1234`。之后依次输出`parent_proc:hello!`、`num=2`，若程序正常执行的话由于`exit_state`已经等于1234，**最后应该输出`good boy!`**。
 
 ![process_pic_test3](pictures/process_pic_test3.png)
 
@@ -340,12 +344,73 @@ void proc_scheduler()
 }
 ```
 
-修复后成功通过了测试，测试结果截图见：[`test4.png`](pictures/test4.png)，可以看到在**子进程睡眠30个时钟周期后成功唤醒了父进程（proc1）**，另外由于时钟每更新一次就需要唤醒子进程（proc2）检查自己是否睡到了30个周期，所以proc2一直在交替显示sleeping/wakeup。
+修复后成功通过了测试，测试结果截图见：[`test4(1).png`](pictures/test4(1).png) 和 [`test4(2).png`](pictures/test4(2).png)，可以看到在**子进程睡眠30个时钟周期后成功唤醒了父进程（proc1）**，另外由于时钟每更新一次就需要唤醒子进程（proc2）检查自己是否睡到了30个周期，所以proc2一直在交替显示sleeping/wakeup。
 
 ### test5
 
+**这是对于孤儿进程过继（Reparent）的测试**，补充的测试代码见 [`initcode`](src/user/initcode.c) 的对应部分。
+
+
+代码的**各阶段进程关系图**如下所示：
+
+```
+阶段 1: 创建子进程 A
+[PID 1] Initcode
+   |
+   +--- fork() ---> [PID 2] Child A
+
+阶段 2: A 创建孙子进程 B
+[PID 1] Initcode
+   |
+   +--- [PID 2] Child A
+         |
+         +--- fork() ---> [PID 3] Grandchild B
+
+阶段 3: A 立即退出，B 成为孤儿
+[PID 1] Initcode
+   |
+   +--- [PID 2] Child A (exited)
+         |
+         +--- [PID 3] Grandchild B (orphan)
+
+阶段 4: B 被过继给 PID 1
+[PID 1] Initcode
+   |
+   +--- [PID 3] Grandchild B (reparented to PID 1)
+
+阶段 5: PID 1 等待回收 A 和 B
+[PID 1] Initcode (waits for A: gets PID 2, then waits for B: gets PID 3)
+   |
+   +--- [PID 3] Grandchild B (reaped by PID 1)
+```
+
+预期结果是：
+1. `Child (A) exit immediately`：子进程 A 先退出。
+2. `Wait 1: pid=2`：PID 1 成功回收了 A。
+3. `Grandchild (B) exit`：B 进程随后退出。
+4. `Wait 2: pid=3`：PID 1 成功回收了 B（**证明 B 成功过继给了 PID 1**，否则 PID 1 无法 wait 到它）。
+
+测试结果见：[`test5(1).png`](pictures/test5(1).png) 和[`test5(2).png`](pictures/test5(2).png)，可以看到输出完全符合预期，证明了 `proc_exit` 中的 `proc_reparent` 逻辑正确，**孤儿进程被正确托付给了 PID 1**。
+
 ### test6
 
+**这是对于抢占式调度（Preemption）的测试**，补充的测试代码见[`initcode`](src/user/initcode.c)注释的对应部分。
+
+测试逻辑是：父进程 fork 出一个子进程，然后**父子进程同时进入一个长循环**，分别打印 'A' 和 'B'。
+
+预期结果是：由于我们实现了**时间片轮转**，内核会在时钟中断时强制切换进程，所以输出的 'A' 和 'B' 应该是**交替出现**的，而不是先输出一大堆 'A' 再输出一大堆 'B'。
+
+测试结果见：[`test6.png`](pictures/test6.png)，可以看到输出的 'A' 和 'B' 是交替出现的，证明了**时间片轮转调度机制工作正常**。
+
 ### test7
+
+**这是对于并发压力测试（Concurrent Stress Fork）的测试**，补充的测试代码见[`initcode`](src/user/initcode.c)注释的对应部分。
+
+测试逻辑是：父进程**连续 fork 5个子进程**，让它们同时存在于系统中。子进程们会打印自己的 PID 并退出，父进程则**循环调用 `wait` 回收所有子进程**。
+
+测试结果见：[`test7.png`](pictures/test7.png)，可以看到父进程成功创建了 PID 2-6 的子进程（`Forked child pid=...`），并且最终成功回收了所有子进程（`Reaped child pid=...`），验证了：
+- `proc_alloc` 可以正确分配不同的 PID 和进程表槽位。
+- `proc_list` 锁的并发安全性。
+- `wait` 能否正确处理多个僵尸进程。
 
 ## 总结与思考
