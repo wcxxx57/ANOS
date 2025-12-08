@@ -103,19 +103,13 @@ ECNU-OSLAB-2025-TASK
 在initcode.c中调用syscall->进入trap_user_handler识别该系统调用，并调用sysfunc.c的对应函数进行处理->在sysfunc.c的对应函数中获取参数，并调用uvm.c中的对应函数进行实际拷贝
 ```
 
-因此我所做的就是在uvm.c和sysfunc.c中实现了对应的处理函数
+我所做的就是在uvm.c和sysfunc.c中实现了对应的处理函数
 
 #### （1）uvm.c中的支撑函数
 
-在[uvm.c](src/kernel/mem/uvm.c)的`uvm_copyin`，`uvm_copyout`和`uvm_copyin_str`函数中，我主要完成的事就是**使用`memmove`函数来执行拷贝**，`memmove`函数原型：
+在[uvm.c](src/kernel/mem/uvm.c)的`uvm_copyin`，`uvm_copyout`和`uvm_copyin_str`函数中，我主要完成的事就是**使用`memmove`函数来执行拷贝**，并注意了以下两个细节：
 
-```c
-void *memmove(void *dest, const void *src, size_t n);
-```
-
-不过其中对dest、src以及拷贝长度n这三个参数的处理有以下两个细节：
-
-- **用户地址空间和内核地址空间不匹配**的问题（用户传入的地址空间是基于用户页表的, 但是进入内核后使用的是内核页表)，在进行**地址传递**时，要首先查询用户页表, 找到了虚拟地址对应的**物理地址,** 然后再做数据迁移：
+- **用户地址空间和内核地址空间不匹配**：用户传入的地址空间是基于用户页表的, 但是进入内核后使用的是内核页表，**地址传递**时，要首先查询用户页表, 找到了虚拟地址对应的**物理地址,** 再做数据迁移：
 
   ```c
   // 获取src对应的PTE和物理地址
@@ -123,22 +117,11 @@ void *memmove(void *dest, const void *src, size_t n);
   uint64 pa = PTE_TO_PA(*pte); 
   ```
 
-- 数据传递的**src和dst 不一定是page-aligned**的问题，拷贝时不能直接整页大小的拷贝，可能会**因为不对齐而跨页从而拷贝错误**，于是我首先通过计算页内偏移和剩余可拷贝字节数，**计算实际需要拷贝字节数**，再进行拷贝。
+- **数据传递的src和dst 不一定是page-aligned**：不能直接整页拷贝，否则会**因为不对齐而跨页从而拷贝错误**，于是我首先通过计算页内偏移和剩余可拷贝字节数，**计算了实际需要拷贝字节数**，再进行拷贝。
 
 #### （2）sysfunc.c中的系统调用函数
 
-对于[sysfunc.c](src/kernel/syscall/sysfunc.c)的`sys_copyin`，`sys_copyout`和`sys_copyinstr`这三个函数，我首先利用`arg_uint32`和`arg_uint64`**获取用户态传来的参数**（通过`proc->tf->ax`拿到这些参数），然后**调用上面在uvm.c中实现的对应的`uvm_copyxx`函数进行拷贝**，比如`sys_copyout()`如下，`sys_copyin`和`sys_copyinstr`也类似：
-
-```c
-static int kernel_array[5] = {1, 2, 3, 4, 5}; // 内核中的测试数组
-uint64 sys_copyout()
-{
-    uint64 addr;
-    arg_uint64(0, &addr); // 获取第0号参数
-    uvm_copyout(myproc()->pgtbl, addr, (uint64)kernel_array, 5 * sizeof(int)); // 调用uvm_copyout从内核拷贝到用户态
-    return 0;
-}
-```
+对于[sysfunc.c](src/kernel/syscall/sysfunc.c)的`sys_copyin`，`sys_copyout`和`sys_copyinstr`这三个函数，我首先利用`arg_uint32`和`arg_uint64`**获取用户态传来的参数**（通过`proc->tf->ax`拿到这些参数），然后**调用上面在uvm.c中实现的对应的`uvm_copyxx`函数**实现拷贝。
 
 #### （3）测试1：用户态和内核态的数据迁移
 
@@ -167,18 +150,9 @@ uint64 sys_copyout()
 
 - `uvm_heap_grow`函数对应**用户堆空间增加**，通过一个**for循环**为每个增加的页**分配物理页并映射**：
 
-  ```c
-  void *pa = pmem_alloc(false); // 分配物理页
-  vm_mappages(pgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W | PTE_U);//映射
-  ```
-
 - `uvm_heap_ungrow`函数对应**用户堆空间减少**，通过一个**for循环**把每一个要释放的页**解映射**：
 
-  ```c
-  vm_unmappages(pgtbl, va, PGSIZE, true); //解映射
-  ```
-
-细节上，考虑到可能出现新/旧**堆顶不page-aligned**的情况，我统一采用按页向上取整的方式进行对齐：
+细节上，考虑到可能出现新/旧**堆顶不page-aligned**的情况，我统一采用**按页向上取整**的方式进行对齐：
 
 ```c
 uint64 cur_pages = (cur_heap_top + PGSIZE - 1) / PGSIZE; // 向上取整
@@ -227,14 +201,7 @@ case 15:
 
 ##### （1）uvm_ustack_grow
 
-实现起来和`uvm_heap_grow`类似，核心就是利用`pmem_alloc`**分配新的物理页**，然后利用`vm_mappages`进行**映射**。就是流程上首先需要**判断发生page fault的地址是否是合理的栈扩展地址**：
-
-```c
-if (fault_addr >= TRAPFRAME || fault_addr <= MMAP_END) 
-    return (uint64)-1; 
-```
-
-确认合法性后，再计算计算需要拓展的栈页数并进行**物理页面的申请和映射**，最后还要**更新`proc->ustack_npage`**，同时，依然也有**边界检查**（栈不能越过 `MMAP_END`）：
+实现起来和`uvm_heap_grow`类似，核心就是利用`pmem_alloc`**分配新的物理页**，然后利用`vm_mappages`进行**映射**。确认地址合法性后，计算需要拓展的栈页数并进行**物理页面的申请和映射**，并**更新`proc->ustack_npage`**。同时，依然要进行**边界检查**（栈不能越过 `MMAP_END`）：
 
 ```c
 uint64 max_stack_pages = (TRAPFRAME - (uint64)MMAP_END) / PGSIZE;
