@@ -1,14 +1,16 @@
-# LAB-6: 单进程走向多进程——进程调度与生命周期
+# LAB-7: 文件系统 之 磁盘管理
 
-经过之前的实验，proczero已经比较成熟了，在lab6中，我们通过“复制proczero"**从单进程走向了多进程**，并且主要关注了两个问题：**进程调度** + **生命周期**。
+**前言**
 
-我们的分工如下：
+本次实验我们将围绕磁盘管理构建文件系统的基础设施
 
-**丁熙妍**：完成了**spinlock.c睡眠锁**，**kvm_init多进程内核初始化**，**时间片轮转的相关支持**，以及对应的README文档。
+1. 首先讨论QEMU启动时的输入参数disk.img是如何构建的
 
-**吴晨曦**：完成了**proc.c中与进程相关的核心函数**，以及对应的README文档。
+2. 随后讨论以block为基本单位的磁盘读写如何实现, 包括驱动本身+OS提供的配合
 
----
+3. 随后讨论磁盘与内存进行数据交换的桥梁--缓冲系统(buffer)
+
+4. 最后讨论磁盘上bitmap区域的管理方法
 
 ## 代码组织结构
 
@@ -19,7 +21,7 @@ ECNU-OSLAB-2025-TASK
 ├── registers.xml  配置了可视化调试环境
 ├── .gdbinit.tmp-riscv xv6自带的调试配置
 ├── common.mk      Makefile中一些工具链的定义
-├── Makefile       编译运行整个项目
+├── Makefile       编译运行整个项目 (CHANGE)
 ├── kernel.ld      定义了内核程序在链接时的布局
 ├── pictures       README使用的图片目录 (CHANGE, 日常更新)
 ├── README.md      实验指导书 (CHANGE, 日常更新)
@@ -34,10 +36,10 @@ ECNU-OSLAB-2025-TASK
     │   │   └── start.c
     │   ├── lock   锁机制
     │   │   ├── spinlock.c
-    │   │   ├── sleeplock.c (本实验完成, 实现睡眠锁)
-    │   │   ├── method.h (CHANGE)
-    │   │   ├── mod.h (CHANGE, 增加头文件)
-    │   │   └── type.h (CHANGE)
+    │   │   ├── sleeplock.c
+    │   │   ├── method.h
+    │   │   ├── mod.h
+    │   │   └── type.h
     │   ├── lib    常用库
     │   │   ├── cpu.c
     │   │   ├── print.c
@@ -48,380 +50,490 @@ ECNU-OSLAB-2025-TASK
     │   │   └── type.h
     │   ├── mem    内存模块
     │   │   ├── pmem.c
-    │   │   ├── kvm.c (本实验补充, kvm_init从单进程内核栈初始化到多进程内核栈初始化)
+    │   │   ├── kvm.c (TODO, 内核页表增加磁盘相关映射 + vm_getpte处理pgtbl为NULL的情况)
     │   │   ├── uvm.c
     │   │   ├── mmap.c
     │   │   ├── method.h
     │   │   ├── mod.h
     │   │   └── type.h
     │   ├── trap   陷阱模块
-    │   │   ├── plic.c
-    │   │   ├── timer.c (本实验补充, 新增timer_wait函数, 增加时钟中断调度逻辑)
-    │   │   ├── trap_kernel.c (本实验补充, 增加时钟中断调度逻辑)
-    │   │   ├── trap_user.c (本实验补充, 增加时钟中断调度逻辑)
+    │   │   ├── plic.c (TODO, 增加磁盘中断相关支持)
+    │   │   ├── timer.c
+    │   │   ├── trap_kernel.c (TODO, 在外设处理函数中识别和响应磁盘中断)
+    │   │   ├── trap_user.c
     │   │   ├── trap.S
     │   │   ├── trampoline.S
-    │   │   ├── method.h (CHANGE, 增加timer_wait函数声明)
-    │   │   ├── mod.h
+    │   │   ├── method.h
+    │   │   ├── mod.h (CHANGE, include 文件系统模块)
     │   │   └── type.h
     │   ├── proc   进程模块
-    │   │   ├── proc.c (本实验完成, 核心工作)
+    │   │   ├── proc.c (在proc_return中调用文件系统初始化函数)
     │   │   ├── swtch.S
-    │   │   ├── method.h (CHANGE)
-    │   │   ├── mod.h
-    │   │   └── type.h (CHANGE)
+    │   │   ├── method.h
+    │   │   ├── mod.h (CHANGE, include 文件系统模块)
+    │   │   └── type.h
     │   ├── syscall 系统调用模块
-    │   │   ├── syscall.c (CHANGE, 支持新的系统调用)
-    │   │   ├── sysfunc.c (本实验补充, 实现新的系统调用)
-    │   │   ├── method.h (CHANGE)
-    │   │   ├── mod.h
-    │   │   └── type.h (CHANGE)
-    │   └── main.c (CHANGE)
+    │   │   ├── syscall.c (TODO, 新增系统调用)
+    │   │   ├── sysfunc.c (TODO, 新增系统调用)
+    │   │   ├── method.h (CHANGE, 新增系统调用)
+    │   │   ├── mod.h (CHANGE, include文件系统模块)
+    │   │   └── type.h (CHANGE, 新增系统调用)
+    │   ├── fs     文件系统模块
+    │   │   ├── bitmap.c (TODO, bitmap相关操作)
+    │   │   ├── buffer.c (TODO, 内存中的block缓冲区管理)
+    │   │   ├── fs.c (TODO, 文件系统相关)
+    │   │   ├── virtio.c (NEW, 虚拟磁盘的驱动)
+    │   │   ├── method.h (NEW)
+    │   │   ├── mod.h (NEW)
+    │   │   └── type.h (NEW)
+    │   └── main.c (CHANGE, 增加virtio_init)
+    ├── mkfs       磁盘映像初始化
+    │   ├── mkfs.c (NEW)
+    │   └── mkfs.h (NEW)
     └── user       用户程序
-        ├── initcode.c (CHANGE)
+        ├── initcode.c (CHANGE, 日常更新)
         ├── sys.h
         ├── syscall_arch.h
-        └── syscall_num.h (CHANGE)
+        └── syscall_num.h (CHANGE, 日常更新)
 ```
 
-相比于上一个实验，本次实验主要增加了以下功能：
+**标记说明**
 
-- 实现了**多进程**的**资源管理、进程调度与生命周期**的维护。
-- 实现了**睡眠锁**机制，支持进程在等待资源时主动放弃 CPU 进入睡眠状态。
-- 实现了**时钟中断驱动的调度支持**，包括 `timer` 模块的更新、`sys_sleep` 的底层实现以及**时间片轮转**的触发。
-- 完善了**系统调用**，支持 `fork`、`exit`、`wait`、`getpid`、`sleep` 等多进程相关的系统调用。
-- 完善了**内核初始化**，支持多进程内核栈的初始化。
+**NEW**: 新增源文件, 直接拷贝即可, 无需修改
 
----
+**CHANGE**: 旧的源文件发生了更新, 直接拷贝即可, 无需修改
 
-## 具体实现
+**TODO**: 你需要实现新功能 / 你需要完善旧功能
 
-### 1. proc.c
+## 磁盘的初始状态--disk.img如何构建
 
-在 `proc.c` 中，我们完成了**进程管理的核心逻辑**，主要可以分为**资源管理**、**调度机制**和**生命周期**三个部分。在实现过程中，最需要注意的（~~最令人头疼的~~）是以下两点：
+要引入磁盘这种新的外设肯定离不开QEMU的支持, 我们在**QEMUOPTS**增加了这样的两行:
 
-- **各个函数的调用流程**（比如进程交出CPU使用权时，会通过`proc_yield`调用`proc_sched`，从而回到`proc_scheduler`原生进程，这就是一个调用流程。）
-- **锁的持有与释放**（锁的正确使用是建立在调用流程熟悉的基础之上的，在涉及进程结构体中的**共享字段**的访问与修改时就要给该进程上锁，有时候锁的持有和释放**并不在一个函数内**，所以要注意不要重复持有/释放）
-
-为了明确这两点，我们将本次实验中**核心的调用流程和锁的情况**梳理为下图所示：
-
-![](pictures/proc.png)
-
-如图所示，**原生进程**运行`proc_scheduler`，通过**循环扫描**的方式进行进程调度【图中A框】，然后通过`swtch`**切换到用户进程**，然后用户进程通过`proc_sched`**交出CPU使用权**，再通过`swtch`**切换回原生进程**【图中B框】。在我们实现的实验中，交出CPU使用权的原因可能是**时间片耗尽**（`proc_yield`）【图中C框】，**进程退出**（`proc_exit`）【图中D框】，或**因没有子进程可回收而睡眠**（`proc_wait`和`proc_sleep`）【图中E框】。
-
-明确了整体的框架，接下来介绍我们在[proc.c](src/kernel/proc/proc.c)中具体的实现：
-
-#### 资源管理：进程仓库
-
-在资源管理部分，我们引入了 `proc_list` 数组作为**资源仓库**并实现了以下与**进程资源管理**相关的基本函数：
-
-- `proc_init`：初始化进程锁和全局PID锁。
-- `proc_alloc`：申请一个**UNUSED**的**进程控制块（PCB）**并填充基本信息，包括预设**内核栈与上下文**等。这里的一个关键点是设置 `ctx.ra = (uint64)proc_return`，确保**新进程被调度时能正确返回用户态**。同时要注意申请返回时是**带锁**的！
-  - `proc_return`：调用`trap_user_return`**回到用户态**，并且在回去前**释放进程锁**
-- `proc_free`：负责回收进程资源。利用了在lab-5最后实现的**释放用户态页表**的辅助函数，并手动**清空进程结构体**，**设置状态为`UNUSED`**。
-
-#### 调度机制：上下文切换循环
-
-实现了**基于循环扫描**以及**基于时间片轮转**的调度器。
-
-- `proc_scheduler`：基于循环扫描的**调度器**，通过不断扫描 `proc_list`，寻找 `RUNNABLE` 的进程。找到后，通过 `swtch` 切换上下文。
-  - **锁的交接**：调度器在切换前持有进程锁 `p->lk`，切换后由被调度进程（或 `proc_sched` 返回后）负责释放，保证状态转换原子性。
-  - **中断开启**：在扫描循环中必须开启中断（`intr_on`），**否则如果所有进程都处于 SLEEPING 状态，CPU 将死锁在关中断状态**，无法响应时钟中断来唤醒进程（原先因为没有注意这一点造成了错误，具体见“测试与修复”的test4）。
-- `proc_sched`：进程**交出CPU使用权**的通用接口。它负责修改进程状态（`c->proc = NULL`），并调用 `swtch` 切回调度器上下文。
-- `proc_yield`：在基于**时间片轮转**进行调度时调用，强制将当前 `RUNNING` 的进程置为 `RUNNABLE` 并让出 CPU。
-
-#### 生命周期：初始与复制、退出与回收、睡眠与唤醒
-
-进程有五种状态：`unused`、`zombie`、`sleeping`、`runnable`、`running`，这五种状态通过相关函数进行转化的过程如下图所示：
-
-![](pictures/status.png)
-
-与生命周期的维护相关的函数如下所示，我们认为可以分为**初始与复制**、**推出与回收**、**睡眠与唤醒**这三类：
-
-- **初始与复制**
-
-  进程的产生有两种方式，通过`proc_make_first`产生的第一个进程，或通过`proc_fork`继承自父进程：
-
-  - `proc_make_first`：第一个用户进程 `proczero`。不同于 `fork` 的复制逻辑，它需要**手动申请**物理页、构建用户页表（映射 trampoline、trapframe、initcode 代码段及用户栈）、初始化 `trapframe` 和内核上下文 `ctx`，最后将其状态设置为 `RUNNABLE`，使其成为调度器启动后的第一个执行目标。
-
-  - `proc_fork`：实现了进程的**完整复制**。在进行test2的测试时发现了有以下两个要注意的地方（具体内容见“测试与修复”）：
-    - **元数据拷贝**：不仅要复制 `trapframe` 和页表，还**必须复制 `heap_top`、`ustack_npage` 等内存布局元数据**。若不复制，会导致孙子进程 Fork 时无法正确计算内存大小，引发**缺页异常**。
-
-    - **防止Fork Bomb**：必须手动**调整子进程的 `epc += 4`**，防止子进程醒来后重复执行 fork 系统调用。
-
-- **退出与回收**
-
-  `proc_exit` 与`proc_wait`配合，实现了**父子进程的同步回收**：
-
-  - `proc_exit` 负责将自己标记为 `ZOMBIE` 并**唤醒父进程**；如果父进程已死，则将子进程**过继**给 `proczero`（通过`proc_reparent`）。
-  - `proc_wait` 负责**回收 `ZOMBIE` 子进程的资源**。为了避免忙等待，引入了 **`sleep/wakeup` 机制**。
-
-- **睡眠与唤醒**
-
-  - `proc_sleep`：**传入外部锁**，并进入睡眠状态，交出CPU使用权。对于**外部锁并非自身锁**的情况（如等待磁盘读写），函数内部先获取进程锁 `p->lk`，再释放传入的锁，然后切换上下文，回来后需要先释放自身锁，再重新获取外部锁。**外部锁即为自身锁**的情况直接带着这把锁睡眠即可。
-
-    > 关于**为什么`proc_sleep`一定要传入一把锁**？
-    >
-    > 原因是这是一把**外部锁**，`proc_sleep`作为一个进程睡眠等待的**通用接口**，虽然在等待子进程的情况下，这把锁就是**自身锁**；但若是在等待磁盘读写/等待管道数据等情况下，这把锁就**不再是自身锁**。所以只有传入这把锁，才能在`proc_sleep`中释放这把外部锁！
-    >
-    > 那么**为什么一定要在`proc_sleep`内释放外部锁**？
-    >
-    > 原因是如果在睡眠前就放掉了这把锁，会造成**丢失唤醒**的问题：**子进程的唤醒信号**可能会在**父进程睡眠**之间的**时间窗口**内发出并被错过，导致父进程因收不到信号而永久沉睡。所以只能将这把外部锁传入`proc_sleep`，并在`proc_sleep`中获取了进程自身锁后，再释放那把外部锁，完成“**锁的接力**”，防止唤醒信号的丢失。
-
-  - `proc_try_wakeup`&`proc_wakeup`：
-
-    - `proc_wakeup`：**通用唤醒逻辑**。遍历整个进程数组，寻找所有状态为 `SLEEPING` 且**等待频道（`sleep_space`）与传入目标一致**的进程，将其唤醒。
-    - `proc_try_wakeup`**：专用于 `proc_exit` 的定向唤醒逻辑**。它不遍历整个进程数组，而是直接获取当前进程的**父进程**。如果父进程存在，且正在睡眠等待子进程退出（即 `sleep_space` 等于父进程自身地址），则将其唤醒。
-
-通过对上述核心函数的实现与剖析，我们深刻体会到了**锁在多进程管理中的核心地位**。为确保并发安全，我们需要明确进程结构体中哪些是“竞争点”，因此对进程结构体中的**共享字段**进行了梳理：
-
-> **进程结构体中哪些字段会被共享访问？特例是什么？**
->
-> - **共享访问的字段**（必须持有 `p->lk` 才能访问）
->   - **state（状态）**：这是**最核心**的共享字段。调度器（`proc_scheduler`）需读取它寻找 `RUNNABLE`；父进程（`proc_wait`）需读取它判断 `ZOMBIE`；唤醒者（`proc_wakeup`）需读取它判断 `SLEEPING`。
->   - **parent（父进程指针）**：涉及**父子进程间的同步**。子进程退出（`proc_exit`）时需通过它找到父进程；父进程等待（`proc_wait`）时需通过它确认子进程归属。
->   - **exit_code（退出码）**：典型的“**生产者-消费者**”模型数据。子进程退出时写入，父进程等待时读取。
->   - **sleep_space（睡眠频道）**：进程睡眠时写入，唤醒者（可能是另一个进程或中断处理程序）需要读取并比对该字段来决定是否唤醒。
->   - **pid**：全局进程查找（如 kill 或调试）时会被访问。
->
-> - **特例字段**
->   - **当前运行的进程访问自己的私有字段**（如 `tf`、`kstack`、`pgtbl`、`context`）通常不需要加锁。
->     - **原因**：这些资源在进程 `RUNNING` 状态下是私有的，只有当前 CPU 能访问，不存在并发竞争。
->     - **打破特例的情况**：当进程处于 **`FORK`（父进程读写子进程页表/Trapframe）** 或 **`EXIT`（父进程回收子进程资源）** 阶段时，这些字段会被其他进程访问，此时必须加锁保护。
-
-### 2. sleeplock.c
-
-完成 `proc.c`的核心工作（特别是 `proc_sleep` 和 `proc_wakeup`）后，我们就有能力实现更高级的同步原语——**睡眠锁**(`sleeplock`)。
-
-在[sleeplock.c](src/kernel/lock/sleeplock.c)中，我们在自旋锁和进程睡眠唤醒机制的基础上，建立了睡眠锁这种新的锁类别。它与我们之前实现的自旋锁（`spinlock`）有**显著的区别**，适用于不同的场景：
-
-| 特性       | 自旋锁 (`spinlock`)                        | 睡眠锁 (`sleeplock`)                           |
-| ---------- | ------------------------------------------ | ---------------------------------------------- |
-| 一致性保证 | 依赖开关中断和原子指令                     | 依赖自旋锁保护内部状态                         |
-| 获取失败时 | **忙等** (Busy-wait)，不断尝试             | **睡眠** (Sleep)，主动让出 CPU                 |
-| 适用场景   | 保护**短期**持有的资源（如修改链表、状态） | 保护**长期**持有的资源（如磁盘 I/O、文件读写） |
-| 中断环境   | 持有期间必须关中断                         | 持有期间可以开中断（因为会睡眠）               |
-
-
-**实现逻辑**：
-
-睡眠锁的结构体中包含一个**内部自旋锁**（保护锁自身状态）以及锁的状态信息。它的整体框架与自旋锁非常相似，但在获取和释放时会**调用进程管理层的接口**：
-
-- 获取锁 (`sleeplock_acquire`)：
-  - 首先获取内部自旋锁，并检查锁是否已被占用。
-  - 如果已被占用，**调用 `proc_sleep` 让当前进程进入睡眠状态**，等待唤醒。
-  - 被唤醒后，循环检查锁状态，直到成功获取锁。
-  - 成功获取后，登记持有者信息，并释放内部自旋锁。
-
-- 释放锁 (`sleeplock_release`)：
-  - 获取内部自旋锁，并清除持有者信息。
-  - **调用 `proc_wakeup` 唤醒所有在该锁上睡眠的进程**。
-  - 释放内部自旋锁。
-
-这一机制在后续的**文件系统**实验中将发挥重要作用，因为文件读写通常耗时较长，如果使用自旋锁会导致 CPU 资源的极大浪费。
-
-### 3. sysfunc.c
-
-我们在 lab-5 中已经建立了完善的系统调用流程，在本次实验中，我们将 `proc.c` 和 `timer.c` 中实现的核心功能封装成了系统调用，便于在用户空间进行测试和使用。
-
-本次实验新增了以下系统调用：
-
-| 系统调用        | 函数原型                          | 功能描述                   |
-| :-------------- | :-------------------------------- | :------------------------- |
-| `SYS_print_str` | `uint64 sys_print_str(char *str)` | 打印字符串                 |
-| `SYS_print_int` | `uint64 sys_print_int(int num)`   | 打印 32 位整数             |
-| `SYS_getpid`    | `uint64 sys_getpid()`             | 获取当前进程的 PID         |
-| `SYS_fork`      | `uint64 sys_fork()`               | 进程复制（创建子进程）     |
-| `SYS_wait`      | `uint64 sys_wait(uint64 addr)`    | 等待子进程退出并获取退出码 |
-| `SYS_exit`      | `uint64 sys_exit(int exit_code)`  | 进程退出                   |
-| `SYS_sleep`     | `uint64 sys_sleep(uint64 ntick)`  | 进程睡眠 ntick 个时钟周期  |
-
-其中前 2 个主要用于**调试输出**，中间 4 个主要调用了 **`proc.c` 中的对应函数**，这里不再赘述。因此我们重点介绍一下最后一个系统调用 **`sys_sleep`** 的实现。
-
-#### sys_sleep
-
-这个系统调用的作用是让当前进程睡眠 `ntick` 个时钟周期。它依赖于 [`timer.c`](src/kernel/timer/timer.c) 中的实现：
-
-1. **进入睡眠 (`timer_wait`)**：
-   - 记录当前的系统 tick 数 `start_ticks`。
-   - 循环检查 `sys_timer.ticks - start_ticks < ntick`。
-   - 如果时间未到，调用 `proc_sleep`，让当前进程以**系统时钟 `sys_timer`** 为资源进入**睡眠状态**。
-2. **时钟更新与唤醒 (`timer_update`)**：
-   - 每当发生时钟中断时，内核会调用 `timer_update`，更新 `sys_timer.ticks`。
-   - 调用 `proc_wakeup((void *)&sys_timer)`，**唤醒所有在系统时钟上睡眠的进程**。
-3. **检查与返回**：
-   - 进程被唤醒后，回到 `timer_wait` 的循环中再次检查时间。
-   - 如果发现已经到达了目标时间，则**离开循环，系统调用返回**；否则**重新进入睡眠状态**。
-
----
-
-## 测试与修复
-
-### test1
-
-**这是对于sys_getpid和sys_print_str的基础测试**，确保用户进程能够打印字符，测试代码见[`initcode`](src/user/initcode.c)中注释的对应部分。
-
-测试通过的截图见：[`test1.png`](pictures/test1.png)
-
-### test2
-
-**这是对于fork的测试**，测试代码见[`initcode`](src/user/initcode.c)注释的对应部分。
-
-根据代码绘制的**进程图**如下所示：预期应该输出1个level-1，2个level-2，4个level-3（部分进程的level-3可能会随机在子/父进程的level-2之前输出）。
-
-![process_pic_test2](pictures/process_pic_test2.png)
-
-测试过程中遇到的问题：出现**unknow exception**！
-
-根据调试结果：
-
-![alt text](pictures/test2_bug1.png)
-
-- scause = 12 (0xc): Instruction Page Fault（取指缺页异常）。
-- sepc = 0: 异常发生时的程序计数器（PC）为 0。
-
-- stval = 0: 导致异常的虚拟地址为 0。
-
-结论：子进程试图从地址 0x0 处取指令执行，但该地址无效（未映射或不可执行）。
-
-原因：在`proc_fork` 中，**没为子进程复制`tf->user_to_kern_epc`**。父进程调用fork时，其`tf->user_to_kern_epc`保存的是ecall指令的地址。子进程被创建时，tf是新分配并清零的。于是当子进程被调度运行并返回用户态时，会**跳转到 epc (即 0) 处执行，导致取指缺页异常**。
-
-修复：
-
-```c
-// memset(tf, 0, PGSIZE); 错误！
-// 【修复1】直接拷贝父进程的 trapframe 内容，而不是清零
-*tf = *parent->tf; 
-// 【修复2】子进程的 epc 需要 +4，跳过当前的 ecall 指令
-// 否则子进程醒来后会再次执行 ecall，导致无限递归 fork
-tf->user_to_kern_epc += 4;
+```
+QEMUOPTS += -drive file=$(DISKIMG),if=none,format=raw,id=x0 # 初始磁盘映像
+QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 # 虚拟磁盘设备
 ```
 
-然后：
+它定义了磁盘在启动时的初始状态为disk.img, 同时启动了一个虚拟磁盘设备作为disk.img的载体
 
-![test2_bug2](pictures/test2_bug2.png)
+**disk.img不是凭空产生的,它是如何构建的呢？**
 
-可以看到：子进程也跑起来了：打印了 level-2! -> level-3!
-但最终依然发生了缺页，发现原因是：**没有复制父进程的堆栈和堆顶指针**，导致子进程访问了未映射的地址。
+请你关注**mkfs/mkfs.c**和**mkfs/mkfs.h**源文件
+
+简单来说, 它负责创建和打开一个文件, 并向这个文件写入一些信息进行文件系统格式化
+
+通过`open + lseek + write + close`这组常见的文件接口来实现 (注意, 它不是基于我们实现的内核, 而是Linux)
+
+具体来说, 磁盘可以被看作以block为基本单位的长数组, **mkfs.h**规定了磁盘布局结构如下:
+
+**[ superblock | inode bitmap | inode region | data bitmap | data region ]**
+
+- block是磁盘的基本逻辑单位, 磁盘由若干block构成, block的大小规定为**BLOCK_SIZE**, 这里与**PAGE_SIZE**保持一致
+
+- 第1部分由**1个**block构成, 被称为超级块, 记录了文件系统和磁盘的相关信息(布局、魔数、块大小等), 是最重要的元数据
+
+- 第2、3部分描述文件系统元数据, 第4、5部分描述文件系统数据, 他们都是**element_bitmap + element_region**的结构
+
+- 第3部分包括N个inode, 第2部分描述第3部分各个inode元素是否分配出去了 (bit为1代表已分配, bit为0代表未分配)
+
+- 第5部分包括M个data block, 第4部分描述第5部分各个data block元素是否分配出去了 (bit为1代表已分配, bit为0代表未分配)
+
+通过修改**N_INODE**和**N_DATA_BLOCK**, 我们可以控制元数据资源池和数据资源池的大小, 进而影响disk.img的大小
+
+初始化结束后, disk.img中的**superblock**完成了设置, **inode bitmap**和**data bitmap**全部清零
+
+注意: 在本次实验中, 你只需要知道**inode region**是一个区别于**data region**的区域即可, 不需要对inode有细致了解
+
+## 构建block-level的读写能力
+
+构建disk.img后, 我们还需要构建读写它的基本能力, 才能实现数据的持久化存储
+
+前面提到过, 磁盘的基本管理单位是block, 因此我们首先考虑如何构建block-level的读写能力
+
+我们之前学习过另一种具备读写能力的外设--UART(串口), 可以获得以下启示:
+
+- 需要**磁盘驱动程序**, 通过一系列寄存器操作实现读写能力
+
+- 需要与OS的陷阱子系统密切配合, 实现中断响应函数 (磁盘操作很费时, 必须采用中断方式)
+
+**1. 首先讨论磁盘驱动程序的部分 (了解即可)**
+
+驱动程序非常复杂, 且和设备寄存器耦合严密, 不是学习的重点, 只需要知道它提供的接口即可
+
+请你查看**kernel/fs/virtio.c**源文件, 它包括以下几个函数:
 
 ```c
-// 【修复3】复制堆栈和堆顶指针
-child->heap_top = parent->heap_top;
-child->ustack_npage = parent->ustack_npage;
+/* virtio.c: 以block为单位的磁盘读写能力 */
+
+void virtio_disk_init(); // 磁盘初始化
+void virtio_disk_rw(buffer_t *b, bool write); // 磁盘读写
+void virtio_disk_intr(); // 磁盘中断处理
 ```
 
-修复后通过了测试，测试结果见：[`test2.png`](pictures/test2.png)，输出符合预期。
+- `virtio_disk_init`与磁盘进行通信并让它进入READY状态
 
-### test3
+- `virtio_disk_rw`提供了以block为单位的读写能力, 供buffer子系统使用
 
-**这是对于fork，wait和exit的综合测试**，测试代码见[`initcode`](src/user/initcode.c)注释的对应部分。
+- `virtio_disk_intr`是磁盘中断处理流程, 当磁盘完成一次I/O时会通过中断系统提醒OS, 唤醒等待磁盘资源的进程
 
-代码的**进程图**如下所示（除去测试前面部分的mmap和heap的打印），预期是子进程先依次输出`child_proc:hello!`、`MMAP_REGION`、`HEAP_REGION`、`STACK_REGION`，然后以退出码1234退出，父进程起初`exit_state=0`，但**经过`syscall(SYS_wait, &exit_state)`后，等待子进程退出（中间sleep），并在子进程退出后将其退出码写入`exit_state`**，于是`exit_state=1234`。之后依次输出`parent_proc:hello!`、`num=2`，若程序正常执行的话由于`exit_state`已经等于1234，**最后应该输出`good boy!`**。
+**2. 再讨论OS如何与磁盘驱动配合 (需要你做)**
 
-![process_pic_test3](pictures/process_pic_test3.png)
+- 系统初始化(**main.c**): 在合适的位置增加虚拟磁盘初始化的逻辑
 
-测试结果见：[`test3.png`](pictures/test3.png)，最后输出了`good boy`，其他输出也符合预期，测试通过。
+- 内存系统(**pmem.c**): 需要在内核页表初始化时, 完成磁盘相关寄存器的映射工作
 
-### test4
+- 内存系统(**pmem.c**): `virtion_disk_rw`中调用了`vm_getpte`进行地址翻译, 但是无法将页表参数设为内核页表(它是static的), 所以传入了NULL代表需要使用内核页表进行翻译, 需要修改`vm_getpte`来处理这种情况
 
-**这是对于wait和sleep的测试**：子进程睡眠30个时钟周期后唤醒父进程，具体测试代码见[`initcode`](src/user/initcode.c)的对应部分。
+- 陷阱系统(**plic.c**): 使能磁盘中断并设置磁盘中断的优先级
 
-测试过程中遇到的问题：只输出了 Ready to sleep! 
+- 陷阱系统(**trap_kernel.c**): 在外设中断处理流程中增加磁盘中断的处理分支
 
-![alt text](pictures/test4_bug1.png)
-
-发现是因为：proc_scheduler中**没有开启中断**，导致所有进程sleep时CPU死锁在关中断状态，无法响应时钟中断唤醒进程。
+## 建立磁盘与内存的数据交换桥梁--缓冲系统 (buffer)
 
 ```c
-void proc_scheduler()
+/* 以Block为单位在内存和磁盘间传递数据 */
+typedef struct buffer {
+    /*
+        锁的说明:
+        1. block_num和ref由全局的自旋锁lk_buf_cache保护
+        2. data和disk由内部的睡眠锁slk保护
+    */
+    uint32 block_num;                // buffer对应的磁盘内block序号 
+    uint32 ref;                      // 引用数 (该buffer被get的次数)
+    sleeplock_t slk;                 // 睡眠锁
+    uint8* data;                     // block数据(大小为BLOCK_SIZE)
+    bool disk;                       // 在virtio.c中使用
+} buffer_t;
+```
+
+首先, 数据要从内存写入磁盘, 需要将内存缓冲区与磁盘中block的序号进行绑定, 指导`virtio_disk_rw`的工作
+
+因此, **buffer_t**需要包括**uint32 block_num**和**uint8* data**来记录这种绑定关系
+
+此外, 磁盘是共享资源, 可能有多个进程同时访问一个block的情况
+
+因此, 需要引入睡眠锁**slk**保证高效的有序访问, 引入计数器**ref**防止过早释放资源
+
+最后, 需要增加一个**disk**字段供**virtio.c**使用, 这里不做解释
+
+```c
+static buffer_node_t buf_cache[N_BUFFER];
+static buffer_node_t buf_head_active, buf_head_inactive;
+static spinlock_t lk_buf_cache;
+```
+
+类似之前**mmap**的管理方式, **buffer结构体资源**被组织为两个带头节点的双向循环链表
+
+**1. 资源初始化 (buffer_init)**
+
+非活跃链表(以**buf_head_inactive**为头节点)中所有元素的ref都等于0 (无人引用)
+
+活跃链表(以**buf_head_inactive**为头节点)中所有元素的ref都大于0 (有人引用)
+
+因此, 在初始化时, buf_cache中所有buffer的ref设为0, block_num设为**BLOCK_NUM_UNUSED**
+
+随后, 将所有初始化的buffer插入非活跃链表 (我们希望第一个buffer最后位于buf_head_inactive->next)
+
+**2. 资源获取 (buffer_get)**
+
+buffer在链表间/链表内的移动遵守LRU原则: 最活跃的资源位于head->next, 最不活跃的资源位于head->prev
+
+![pic](./picture/LRU_get_operation.png)
+
+当上层尝试获取某个block对应的buffer时(如图片所示):
+
+- 我们首先尝试在活跃链表中寻找 (从head->next开始), 找到后将它移动到活跃链表的head->next
+
+- 如果找不到则尝试在不活跃链表中开始寻找 (从head->next开始), 找到后将它移动到活跃链表的head->next
+
+- 如果还是找不到, 说明缓存失败: 将系统中最不活跃的buffer拿出来, 设置block_num, 移动到活跃链表的head->prev
+
+如果buffer hit, 只需上锁后返回; 如果buffer miss, 上锁后需要先去磁盘中读入目标block
+
+注意: 通过buffer_get获取的buffer, 对应的ref应该+1, 记录被使用的次数
+
+**3. 资源释放 (buffer_put)**
+
+buffer释放时ref应该-1, 如果减到0, 则移动到不活跃链表的head->next
+
+![pic](./picture/LRU_put_operation.png)
+
+**4. 关于buffer控制的物理内存的申请和释放**
+
+我们按照自动申请, 手动释放的原则管理buffer控制的物理内存资源 (大小为BLOCK_SIZE, 与物理页一样大)
+
+具体来说:
+
+- 在`buf_get`获取不活跃链表中的元素时, 检查buf->data是否为NULL, 是的话申请一个物理页
+
+- 在`buf_freemem`中扫描不活跃链表中的若干最不活跃元素, 尝试释放buffer_count个物理页
+
+**5. 基于buffer的block读写**
+
+`buffer_read` 和 `buffer_write` 的底层都是 `virtio_disk_rw`
+
+只是在此基础上增加了睡眠锁检查, 确保调用者持有锁后才能进入耗时的磁盘操作
+
+**6. 典型的buffer使用方法**
+
+```c
+/* 常规流程 */ 
+buffer_t* buf = buf_get(block_num);
+do_something_in_buf_data();
+buf_write(buf); // 也可以只读不修改
+buf_put(block_num);
+
+/* 一段时间后可能存在大量无用缓存 */
+buf_freemem(N_BUFFER);
+
+```
+
+## 使用buffer: 读入superblock
+
+让我们来利用刚刚建立的缓冲系统做点重要的事情: 读入超级块
+
+**首先考虑读入的时机: 可以在main函数中完成吗?**
+
+不能, 因为磁盘读入会触发`proc_sleep`和`proc_wakeup`
+
+所以需要在用户进程的上下文中执行, 而不是在初始化过程中执行
+
+**什么时刻是最早的时机呢?**
+
+初始化过程中通过`proc_make_first`准备好了**proczero**, 并将它的context->ra设为`proc_return`
+
+之后初始化过程进入调度器逻辑(`proc_scheduler`), 将控制流切换到**proczero**
+
+因此, 最早的时机就是**proczero**第一次进入`proc_return`时!
+
+我们在这里调用`fs_init`进行文件系统初始化, 目前主要用于初始化缓冲系统和读入superblock
+
+考虑到debug的方便性, 请在读入superblock后输出磁盘布局信息 (通过`sb_print`)
+
+## 使用buffer: bitmap管理
+
+bitmap的管理以bit为基本粒度, 因此需要单独开辟一套管理逻辑
+
+- 当申请一个data block或inode时, 对应bitmap的某个bit被置为1
+
+- 当释放一个data block或inode时, 对应bitmap的对应bit被置为0
+
+请你基于buffer来实现以下函数:
+
+```c
+uint32 bitmap_alloc_block();
+uint32 bitmap_alloc_inode();
+void bitmap_free_block(uint32 block_num);
+void bitmap_free_inode(uint32 inode_num);
+```
+
+**它们的共同逻辑:**
+
+- `bitmap_search_and_set`: 在1个bitmap_block中从头先后扫描bit流, 找到第一个为0的bit, 设置为1并返回索引号
+
+- `bitmap_clear`: 将bitmap_block中的某个bit设为0
+
+**需要注意的问题:**
+
+- bitmap区域可能横跨多个block, 寻找空闲bit时需要遍历
+
+- bitmap区域的最后一个block可能只用了一部分, 寻找空闲bit时需要传入有效范围
+
+- 细心一点, 可以通过逐字节遍历和逐bit位运算来寻找空闲bit
+
+## 增加系统调用
+
+我们需要增加以下11个系统调用的支持, 以支持后面的用户态测试用例
+
+```c
+#define SYS_alloc_block 11  // 从data_bitmap申请1个block (测试data_bitmap_alloc)
+#define SYS_free_block 12   // 向data_bitmap释放1个block (测试data_bitmap_free)
+#define SYS_alloc_inode 13  // 从inode_bitmap申请1个inode (测试inode_bitmap_alloc)
+#define SYS_free_inode 14   // 向inode_bitmap释放1个inode (测试inode_bitmap_free)
+#define SYS_show_bitmap 15  // 输出目标bitmap的状态
+#define SYS_get_block 16    // 获取1个描述block的buffer (测试buffer_get)
+#define SYS_read_block 17   // 将buf->data拷贝到用户空间
+#define SYS_write_block 18  // 基于用户地址空间更新buffer->data并写入磁盘 (测试buffer_write)
+#define SYS_put_block 19    // 释放1个描述block的buffer (测试buffer_put)
+#define SYS_show_buffer 20  // 输出buffer链表的状态
+#define SYS_flush_buffer 21 // 释放非活跃链表中buffer持有的物理内存资源 (测试buffer_freemem)
+```
+
+请你结合**kernel/sycall/sysfunc.c**的注释和后面给出的测试用例来理解这些系统调用的输入输出
+
+几乎都是先做参数读取, 然后调用对应的实现函数, 请你实现这些系统调用, 这里不做详细介绍
+
+## 测试用例
+
+测试开始前, 请将**N_BUFFER**从(32 * 512)改成**N_BUFFER_TEST**, 方便测试
+
+测试用例包括三个部分:
+
+1. 什么都不做, 测试superblock信息能否正常输出, 检验磁盘和缓冲系统的基本能力
+
+2. 测试bitmap中资源申请和释放的正确性
+
+3. 测试缓冲系统的LRU管理逻辑是否生效
+
+**test-1**
+
+```c
+// test-1: read superblock
+#include "sys.h"
+
+int main()
 {
-    cpu_t *c = mycpu();
-    for (;;) {
-        // 【修复】开启中断，否则所有进程 sleep 时 CPU 会死锁在关中断状态
-        intr_on(); 
-    ...
-    }
+	syscall(SYS_print_str, "hello, world!\n");
+	while(1);
 }
 ```
 
-修复后成功通过了测试，测试结果截图见：[`test4(1).png`](pictures/test4(1).png) 和 [`test4(2).png`](pictures/test4(2).png)，可以看到在**子进程睡眠30个时钟周期后成功唤醒了父进程（proc1）**，另外由于时钟每更新一次就需要唤醒子进程（proc2）检查自己是否睡到了30个周期，所以proc2一直在交替显示sleeping/wakeup。
+理想测试结果见`./picture/test-1.png`
 
-### test5
+**test-2**
 
-**这是对于孤儿进程过继（Reparent）的测试**，补充的测试代码见 [`initcode`](src/user/initcode.c) 的对应部分。
+```c
+// test-2: bitmap
+#include "sys.h"
 
+#define NUM 20
+#define N_BUFFER 8
 
-代码的**各阶段进程关系图**如下所示：
+int main()
+{
+	unsigned int block_num[NUM];
+	unsigned int inode_num[NUM];
 
+	for (int i = 0; i < NUM; i++)
+		block_num[i] = syscall(SYS_alloc_block);
+
+	syscall(SYS_flush_buffer, N_BUFFER);
+	syscall(SYS_show_bitmap, 0);
+
+	for (int i = 0; i < NUM; i+=2)
+		syscall(SYS_free_block, block_num[i]);
+	
+	syscall(SYS_flush_buffer, N_BUFFER);
+	syscall(SYS_show_bitmap, 0);
+
+	for (int i = 1; i < NUM; i+=2)
+		syscall(SYS_free_block, block_num[i]);
+
+	syscall(SYS_flush_buffer, N_BUFFER);
+	syscall(SYS_show_bitmap, 0);
+
+	for (int i = 0; i < NUM; i++)
+		inode_num[i] = syscall(SYS_alloc_inode);
+
+	syscall(SYS_flush_buffer, N_BUFFER);
+	syscall(SYS_show_bitmap, 1);
+
+	for (int i = 0; i < NUM; i++)
+		syscall(SYS_free_inode, inode_num[i]);
+
+	syscall(SYS_flush_buffer, N_BUFFER);
+	syscall(SYS_show_bitmap, 1);
+
+	while(1);
+}
 ```
-阶段 1: 创建子进程 A
-[PID 1] Initcode
-   |
-   +--- fork() ---> [PID 2] Child A
 
-阶段 2: A 创建孙子进程 B
-[PID 1] Initcode
-   |
-   +--- [PID 2] Child A
-         |
-         +--- fork() ---> [PID 3] Grandchild B
+理想测试结果见`./picture/test-2.png`
 
-阶段 3: A 立即退出，B 成为孤儿
-[PID 1] Initcode
-   |
-   +--- [PID 2] Child A (exited)
-         |
-         +--- [PID 3] Grandchild B (orphan)
+**test-3**
 
-阶段 4: B 被过继给 PID 1
-[PID 1] Initcode
-   |
-   +--- [PID 3] Grandchild B (reparented to PID 1)
+```c
+#include "sys.h"
 
-阶段 5: PID 1 等待回收 A 和 B
-[PID 1] Initcode (waits for A: gets PID 2, then waits for B: gets PID 3)
-   |
-   +--- [PID 3] Grandchild B (reaped by PID 1)
+#define PGSIZE 4096
+#define N_BUFFER 8
+#define BLOCK_BASE 5000
+
+int main()
+{
+	char data[PGSIZE], tmp[PGSIZE];
+	unsigned long long buffer[N_BUFFER];
+
+	/*-------------一阶段测试: READ WRITE------------- */
+
+	/* 准备字符串"ABCDEFGH" */
+	for (int i = 0; i < 8; i++)
+		data[i] = 'A' + i;
+	data[8] = '\n';
+	data[9] = '\0';
+
+	/* 查看此时的buffer_cache状态 */
+	syscall(SYS_print_str, "\nstate-1 ");
+	syscall(SYS_show_buffer);
+
+	/* 向BLOCK_BASE写入字符 */
+	buffer[0] = syscall(SYS_get_block, BLOCK_BASE);
+	syscall(SYS_write_block, buffer[0], data);
+	syscall(SYS_put_block, buffer[0]);
+
+	/* 查看此时的buffer_cache状态 */
+	syscall(SYS_print_str, "\nstate-2 ");
+	syscall(SYS_show_buffer);
+
+	/* 清空内存副本, 确保后面从磁盘中重新读取 */
+	syscall(SYS_flush_buffer, N_BUFFER);
+
+	/* 读取BLOCK_BASE*/
+	buffer[0] = syscall(SYS_get_block, BLOCK_BASE);
+	syscall(SYS_read_block, buffer[0], tmp);
+	syscall(SYS_put_block, buffer[0]);
+
+	/* 比较写入的字符串和读到的字符串 */
+	syscall(SYS_print_str, "\n");
+	syscall(SYS_print_str, "write data: ");
+	syscall(SYS_print_str, data);
+	syscall(SYS_print_str, "read data: ");
+	syscall(SYS_print_str, tmp);
+
+	/* 查看此时的buffer_cache状态 */
+	syscall(SYS_print_str, "\nstate-3 ");
+	syscall(SYS_show_buffer);
+
+	/*-------------二阶段测试: GET PUT FLUSH------------- */
+	
+	/* GET */
+	buffer[0] = syscall(SYS_get_block, BLOCK_BASE);
+	buffer[3] = syscall(SYS_get_block, BLOCK_BASE + 3);
+	buffer[7] = syscall(SYS_get_block, BLOCK_BASE + 7);
+	buffer[2] = syscall(SYS_get_block, BLOCK_BASE + 2);
+	buffer[4] = syscall(SYS_get_block, BLOCK_BASE + 4);
+
+	/* 查看此时的buffer_cache状态 */
+	syscall(SYS_print_str, "\nstate-4 ");
+	syscall(SYS_show_buffer);
+
+	/* PUT */
+	syscall(SYS_put_block, buffer[7]);
+	syscall(SYS_put_block, buffer[0]);
+	syscall(SYS_put_block, buffer[4]);
+
+	/* 查看此时的buffer_cache状态 */
+	syscall(SYS_print_str, "\nstate-5 ");
+	syscall(SYS_show_buffer);
+
+	/* FLUSH */
+	syscall(SYS_flush_buffer, 3);
+
+	/* 查看此时的buffer_cache状态 */
+	syscall(SYS_print_str, "\nstate-6 ");
+	syscall(SYS_show_buffer);
+
+	while(1);
+}
 ```
+理想测试结果见`./picture/test-3(1).png`和`./picture/test-3(2).png`
 
-预期结果是：
+**尾声**
 
-1. `Child (A) exit immediately`：子进程 A 先退出。
-2. `Wait 1: pid=2`：PID 1 成功回收了 A。
-3. `Grandchild (B) exit`：B 进程随后退出。
-4. `Wait 2: pid=3`：PID 1 成功回收了 B（**证明 B 成功过继给了 PID 1**，否则 PID 1 无法 wait 到它）。
+本次实验只是第三阶段的热身和铺垫~
 
-测试结果见：[`test5(1).png`](pictures/test5(1).png) 和[`test5(2).png`](pictures/test5(2).png)，可以看到输出完全符合预期，证明了 `proc_exit` 中的 `proc_reparent` 逻辑正确，**孤儿进程被正确托付给了 PID 1**。
+我们引入了磁盘这种外设并具备了block-level的管理能力
 
-### test6
+在lab-8中, 我们要用inode将block组织起来并构建层次化的数据存储系统
 
-**这是对于抢占式调度（Preemption）的测试**，补充的测试代码见[`initcode`](src/user/initcode.c)注释的对应部分。
-
-测试逻辑是：父进程 fork 出一个子进程，然后**父子进程同时进入一个长循环**，分别打印 'A' 和 'B'。
-
-预期结果是：由于我们实现了**时间片轮转**，内核会在时钟中断时强制切换进程，所以输出的 'A' 和 'B' 应该是**交替出现**的，而不是先输出一大堆 'A' 再输出一大堆 'B'。
-
-测试结果见：[`test6.png`](pictures/test6.png)，可以看到输出的 'A' 和 'B' 是交替出现的，证明了**时间片轮转调度机制工作正常**。
-
-### test7
-
-**这是对于并发压力测试（Concurrent Stress Fork）的测试**，补充的测试代码见[`initcode`](src/user/initcode.c)注释的对应部分。
-
-测试逻辑是：父进程**连续 fork 5个子进程**，让它们同时存在于系统中。子进程们会打印自己的 PID 并退出，父进程则**循环调用 `wait` 回收所有子进程**。
-
-测试结果见：[`test7.png`](pictures/test7.png)，可以看到父进程成功创建了 PID 2-6 的子进程（`Forked child pid=...`），并且最终成功回收了所有子进程（`Reaped child pid=...`），验证了：
-
-- `proc_alloc` 可以正确分配不同的 PID 和进程表槽位。
-- `proc_list` 锁的并发安全性。
-- `wait` 能否正确处理多个僵尸进程。
-
-## 总结与思考
-
-- **并发与原子性的深刻教训** 
-
-  从单进程到多进程的跨越，最核心的挑战在于**并发控制**。在实现 `proc_sleep` 时，我们深刻理解了为什么必须“传入外部锁”并在“获取进程锁后”才能释放它——这是为了消除“检查条件”与“进入睡眠”之间的**时间窗口**，防止**丢失唤醒（Lost Wakeup）**。此外，`proc_scheduler` 中**忘记开启中断导致死锁**的 Bug，也让我们认识到：操作系统内核中，**锁的使用范围**、**中断的开关时机**以及**上下文切换的原子性**，都十分重要，是维持系统稳定运行的基石。
-
-- **进程：从“代码+数据”到“元数据集合”** 
-
-  在修复 Test2 中子进程缺页异常的过程中，我们意识到进程不仅仅是页表指向的物理内存（**代码和数据**），更是描述这些内存布局的**元数据**。Lab-5 中引入的 `heap_top` 和 `ustack_npage` 等字段，在 Lab-6 的 `fork` 操作中必须被**完整遗传**。任何一个元数据的遗漏（如 `epc` 未跳过 `ecall`、堆顶指针未复制），都可能导致程序在运行时出现难以追踪的逻辑错误。
-
+我们即将进入真正的文件系统逻辑, 请你做好准备迎接新的挑战!
