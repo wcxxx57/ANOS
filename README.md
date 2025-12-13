@@ -80,7 +80,7 @@ ECNU-OSLAB-2025-TASK
     │   │   └── type.h (CHANGE, 新增系统调用)
     │   ├── fs     文件系统模块
     │   │   ├── bitmap.c (TODO, bitmap相关操作)
-    │   │   ├── buffer.c (TODO, 内存中的block缓冲区管理)
+    │   │   ├── buf.c (TODO, 内存中的block缓冲区管理)
     │   │   ├── fs.c (TODO, 文件系统相关)
     │   │   ├── virtio.c (NEW, 虚拟磁盘的驱动)
     │   │   ├── method.h (NEW)

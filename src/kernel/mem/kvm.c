@@ -10,6 +10,11 @@ uint64 kernel_pgtbl_pa = 0;
 // 提示：使用 VA_TO_VPN + PTE_TO_PA + PA_TO_PTE
 pte_t *vm_getpte(pgtbl_t pgtbl, uint64 va, bool alloc)
 {
+    // 处理 pgtbl 为 NULL 的情况：使用内核页表
+    if (pgtbl == NULL) {
+        pgtbl = kernel_pgtbl;
+    }
+
     // 检查地址合法性
     if (va >= VA_MAX)
         return NULL;
@@ -151,6 +156,13 @@ void kvm_init()
                 PLIC_BASE,
                 0x4000000,  // ~64MB
                 PTE_R | PTE_W); // 不可执行
+
+    // 映射 VirtIO 磁盘设备 MMIO 区域
+    vm_mappages(kernel_pgtbl,
+                VIRTIO_BASE, 
+                VIRTIO_BASE,
+                PGSIZE,
+                PTE_R | PTE_W);  // 不可执行
 
     // === Step 4: 映射可用内存区域 [ALLOC_BEGIN, ALLOC_END) ===
     vm_mappages(kernel_pgtbl,
