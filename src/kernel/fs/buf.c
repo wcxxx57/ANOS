@@ -60,8 +60,7 @@ void buffer_init()
 		node->buf.data = NULL;
 		node->buf.disk = false;
 		sleeplock_init(&node->buf.slk, "buffer");
-		// 为了让第一个buffer最终位于inactive->next，选择插入到尾部，保持顺序
-		insert_node(node, /*active*/false, /*insert_next*/false);
+		insert_node(node, /*active*/false, /*insert_next*/true);
 	}
 }
 
@@ -103,7 +102,7 @@ buffer_t* buffer_get(uint32 block_num)
 			// 命中：移动到活跃链表头部
 			insert_node(node, /*active*/true, /*insert_next*/true);
 			node->buf.ref++;
-			// 如果还没有物理页，为其分配
+			// 检查buf->data是否为null
 			if (node->buf.data == NULL) {
 				uint64 pa = (uint64)pmem_alloc(true);
 				assert(pa != 0, "buffer_get: pmem_alloc failed");
@@ -111,12 +110,10 @@ buffer_t* buffer_get(uint32 block_num)
 			}
 			spinlock_release(&lk_buf_cache);
 			sleeplock_acquire(&node->buf.slk);
-			// 从磁盘读入最新数据
-			buffer_read(&node->buf);//!!只有全新的块时，才必须读磁盘？
 			return &node->buf;
 		}
 	}
-	// 3) 缓存未命中：选择不活跃链表中最不活跃的（尾部）
+	// 3) 缓存未命中：选择不活跃链表中最不活跃的替换
 	buffer_node_t *victim = buf_head_inactive.prev;
 	// 应当是一个有效节点
 	assert(victim != &buf_head_inactive, "buffer_get: no inactive buffer available");
@@ -129,7 +126,7 @@ buffer_t* buffer_get(uint32 block_num)
 	}
 	// 绑定新的块号，移动到活跃链表头部并增加引用
 	victim->buf.block_num = block_num;
-	insert_node(victim, /*active*/true, /*insert_next*/true);
+	insert_node(victim, /*active*/true, /*insert_next*/false); //! 注意这里是查到head->prev
 	victim->buf.ref++;
 	spinlock_release(&lk_buf_cache);
 
@@ -181,6 +178,7 @@ uint32 buffer_freemem(uint32 buffer_count)
 		if (node->buf.ref == 0 && node->buf.data != NULL) {
 			pmem_free((uint64)node->buf.data, true);
 			node->buf.data = NULL;
+			node->buf.block_num = BLOCK_NUM_UNUSED; 
 			freed++;
 		}
 	}
