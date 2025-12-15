@@ -40,7 +40,9 @@ static void proc_return()
 {
     proc_t *p = myproc();
     // 回到用户态前释放进程锁
-    spinlock_release(&p->lk); //!!!!!
+    spinlock_release(&p->lk); 
+    // 初始化文件系统
+    fs_init();
     trap_user_return();
 }
 
@@ -386,13 +388,13 @@ void proc_sleep(void *sleep_space, spinlock_t *lock)
     // 开始睡眠
     p->sleep_space = sleep_space;
     p->state = SLEEPING;
-    printf("proc %d is sleeping!\n", p->pid);
+    // printf("proc %d is sleeping!\n", p->pid);
 
     // 切到调度器
     proc_sched();
 
     // 被唤醒
-    printf("proc %d is wakeup!\n", p->pid);
+    // printf("proc %d is wakeup!\n", p->pid);
 
     // 恢复原样
     if (lock != &p->lk) {

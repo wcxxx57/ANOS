@@ -105,7 +105,7 @@ buffer_t* buffer_get(uint32 block_num)
 			node->buf.ref++;
 			// 如果还没有物理页，为其分配
 			if (node->buf.data == NULL) {
-				uint64 pa = (uint64)pmem_alloc(false);
+				uint64 pa = (uint64)pmem_alloc(true);
 				assert(pa != 0, "buffer_get: pmem_alloc failed");
 				node->buf.data = (uint8*)pa;
 			}
@@ -123,7 +123,7 @@ buffer_t* buffer_get(uint32 block_num)
 	assert(victim->buf.ref == 0, "buffer_get: victim ref not zero");
 	// 如无物理页则分配
 	if (victim->buf.data == NULL) {
-		uint64 pa = (uint64)pmem_alloc(false);
+		uint64 pa = (uint64)pmem_alloc(true);
 		assert(pa != 0, "buffer_get: pmem_alloc failed (victim)");
 		victim->buf.data = (uint8*)pa;
 	}
@@ -179,7 +179,7 @@ uint32 buffer_freemem(uint32 buffer_count)
 	for (buffer_node_t *node = buf_head_inactive.prev; node != &buf_head_inactive && freed < buffer_count; node = node->prev) {
 		// 仅处理无人引用的缓冲
 		if (node->buf.ref == 0 && node->buf.data != NULL) {
-			pmem_free((uint64)node->buf.data, false);
+			pmem_free((uint64)node->buf.data, true);
 			node->buf.data = NULL;
 			freed++;
 		}
