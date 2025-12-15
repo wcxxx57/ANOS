@@ -114,7 +114,7 @@ void trap_kernel_handler()
     }
 }
 
-// 外设中断处理 (基于PLIC，lab-3只需要识别和处理UART中断)
+// 外设中断处理 (基于PLIC，lab-3 只需要识别和处理UART中断)
 void external_interrupt_handler()
 {
     // 获取中断号
@@ -127,6 +127,10 @@ void external_interrupt_handler()
         case UART_IRQ:// UART输入中断的中断号 定义在lib/type.h中
             //uart_putc_sync('U');
             uart_intr();
+            break;
+        // lab-7 新增处理磁盘中断
+        case VIRTIO_IRQ:// 虚拟磁盘中断的中断号 定义在fs/type.h中
+            virtio_disk_intr();
             break;
         default:
             printf("\nunexpected external interrupt irq=%d\n", irq);// 其他中断暂时不处理

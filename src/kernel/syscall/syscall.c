@@ -2,13 +2,9 @@
 
 // 跳转表: 系统调用号 -> 系统调用服务函数
 static uint64 (*syscalls[])(void) = {
-    [SYS_copyin] sys_copyin,
-    [SYS_copyout] sys_copyout,
-    [SYS_copyinstr] sys_copyinstr,
     [SYS_brk] sys_brk,
     [SYS_mmap] sys_mmap,
     [SYS_munmap] sys_munmap,
-    [SYS_test_pgtbl] sys_test_pgtbl,
     [SYS_print_str] sys_print_str,
     [SYS_print_int] sys_print_int,
     [SYS_getpid] sys_getpid,
@@ -16,6 +12,17 @@ static uint64 (*syscalls[])(void) = {
     [SYS_wait] sys_wait,
     [SYS_exit] sys_exit,
     [SYS_sleep] sys_sleep,
+    [SYS_alloc_block] sys_alloc_block,
+    [SYS_free_block] sys_free_block,
+    [SYS_alloc_inode] sys_alloc_inode,
+    [SYS_free_inode] sys_free_inode,
+    [SYS_show_bitmap] sys_show_bitmap,
+    [SYS_get_block] sys_get_block,
+    [SYS_read_block] sys_read_block,
+    [SYS_write_block] sys_write_block,
+    [SYS_put_block] sys_put_block,
+    [SYS_show_buffer] sys_show_buffer,
+    [SYS_flush_buffer] sys_flush_buffer,
 };
 
 // 基于系统调用表的请求跳转

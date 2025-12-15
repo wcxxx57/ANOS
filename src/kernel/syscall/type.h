@@ -2,7 +2,6 @@
 #include "../arch/type.h"
 
 /* 系统调用号 */
-
 #define SYS_brk 1           // 调整堆边界
 #define SYS_mmap 2          // 创建内存映射
 #define SYS_munmap 3        // 解除内存映射
