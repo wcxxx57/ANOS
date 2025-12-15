@@ -7,7 +7,7 @@ int main()
 	while(1);
 }
 
-// test-2: bitmap
+// // test-2: bitmap
 // #include "sys.h"
 
 // #define NUM 20

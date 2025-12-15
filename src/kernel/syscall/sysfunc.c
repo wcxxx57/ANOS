@@ -220,7 +220,7 @@ uint64 sys_read_block()
 
     buffer_t *b = (buffer_t *)buf_addr;
     // 读取时如果调用者尚未读磁盘，可再保证一次（持锁即一致）
-    if (!sleeplock_held(&b->slk))
+    if (!sleeplock_holding(&b->slk))
         sleeplock_acquire(&b->slk);
     // 将缓冲区数据拷贝到用户空间
     uvm_copyout(myproc()->pgtbl, user_addr, (uint64)b->data, BLOCK_SIZE);
@@ -236,7 +236,7 @@ uint64 sys_write_block()
     arg_uint64(1, &user_addr);
 
     buffer_t *b = (buffer_t *)buf_addr;
-    if (!sleeplock_held(&b->slk))
+    if (!sleeplock_holding(&b->slk))
         sleeplock_acquire(&b->slk);
     // 先把用户数据拷入缓冲区
     uvm_copyin(myproc()->pgtbl, (uint64)b->data, user_addr, BLOCK_SIZE);

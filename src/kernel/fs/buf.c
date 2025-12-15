@@ -69,14 +69,14 @@ void buffer_init()
 static void buffer_read(buffer_t *buf)
 {
 	// 调用前应持有睡眠锁
-	assert(sleeplock_held(&buf->slk), "buffer_read: sleeplock not held");
+	assert(sleeplock_holding(&buf->slk), "buffer_read: sleeplock not held");
 	virtio_disk_rw(buf, /*write*/false);
 }
 
 /* 磁盘写入: buf -> block */
 void buffer_write(buffer_t *buf)
 {
-	assert(sleeplock_held(&buf->slk), "buffer_write: sleeplock not held");
+	assert(sleeplock_holding(&buf->slk), "buffer_write: sleeplock not held");
 	virtio_disk_rw(buf, /*write*/true);
 }
 
@@ -143,7 +143,7 @@ buffer_t* buffer_get(uint32 block_num)
 void buffer_put(buffer_t *buf)
 {
 	// 释放内部睡眠锁
-	if (sleeplock_held(&buf->slk))
+	if (sleeplock_holding(&buf->slk))
 		sleeplock_release(&buf->slk);
 
 	spinlock_acquire(&lk_buf_cache);
@@ -179,7 +179,7 @@ uint32 buffer_freemem(uint32 buffer_count)
 	for (buffer_node_t *node = buf_head_inactive.prev; node != &buf_head_inactive && freed < buffer_count; node = node->prev) {
 		// 仅处理无人引用的缓冲
 		if (node->buf.ref == 0 && node->buf.data != NULL) {
-			pmem_free((void*)node->buf.data);
+			pmem_free((uint64)node->buf.data, false);
 			node->buf.data = NULL;
 			freed++;
 		}

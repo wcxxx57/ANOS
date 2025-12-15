@@ -41,6 +41,9 @@ static uint32 bitmap_search_and_set(uint32 bitmap_block_num, uint32 valid_count)
             }
         }
     }
+    // 增加函数收尾逻辑
+    buffer_put(buf); 
+    return (uint32)-1;
 }
 
 /* 
