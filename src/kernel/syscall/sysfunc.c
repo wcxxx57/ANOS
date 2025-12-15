@@ -331,3 +331,74 @@ uint64 sys_getpid()
 {
     return (uint64)(myproc()->pid);
 }
+
+/*---------------- buffer 相关 syscalls ----------------*/
+
+// 获取一个描述指定块的buffer，返回buffer的内核地址（用于后续读写）
+uint64 sys_get_block()
+{
+    uint32 block_num;
+    arg_uint32(0, &block_num);
+    buffer_t *b = buffer_get(block_num);
+    return (uint64)b;
+}
+
+// 将buf->data拷贝到用户空间地址
+uint64 sys_read_block()
+{
+    uint64 buf_addr, user_addr;
+    arg_uint64(0, &buf_addr);
+    arg_uint64(1, &user_addr);
+
+    buffer_t *b = (buffer_t *)buf_addr;
+    // 读取时如果调用者尚未读磁盘，可再保证一次（持锁即一致）
+    if (!sleeplock_held(&b->slk))
+        sleeplock_acquire(&b->slk);
+    // 将缓冲区数据拷贝到用户空间
+    uvm_copyout(myproc()->pgtbl, user_addr, (uint64)b->data, BLOCK_SIZE);
+    sleeplock_release(&b->slk);
+    return 0;
+}
+
+// 将用户空间数据写入到buf->data并写回磁盘
+uint64 sys_write_block()
+{
+    uint64 buf_addr, user_addr;
+    arg_uint64(0, &buf_addr);
+    arg_uint64(1, &user_addr);
+
+    buffer_t *b = (buffer_t *)buf_addr;
+    if (!sleeplock_held(&b->slk))
+        sleeplock_acquire(&b->slk);
+    // 先把用户数据拷入缓冲区
+    uvm_copyin(myproc()->pgtbl, (uint64)b->data, user_addr, BLOCK_SIZE);
+    // 再写入磁盘
+    buffer_write(b);
+    sleeplock_release(&b->slk);
+    return 0;
+}
+
+// 释放一个buffer（引用计数-1，可能移入不活跃队列）
+uint64 sys_put_block()
+{
+    uint64 buf_addr;
+    arg_uint64(0, &buf_addr);
+    buffer_t *b = (buffer_t *)buf_addr;
+    buffer_put(b);
+    return 0;
+}
+
+// 打印buffer链表状态（仅测试）
+uint64 sys_show_buffer()
+{
+    buffer_print_info();
+    return 0;
+}
+
+// 释放非活跃链表中的物理页缓存
+uint64 sys_flush_buffer()
+{
+    uint32 n;
+    arg_uint32(0, &n);
+    return (uint64)buffer_freemem(n);
+}

@@ -22,5 +22,16 @@ static void sb_print()
 /* 文件系统初始化 */
 void fs_init()
 {
-	
+	// 初始化缓冲系统
+	buffer_init();
+
+	// 读取超级块
+	buffer_t *b = buffer_get(FS_SB_BLOCK);
+	// 将缓冲区内容拷贝到内存中的sb
+	memmove(&sb, b->data, sizeof(super_block_t));
+	// 归还缓冲（不修改，不需要写回）
+	buffer_put(b);
+
+	// 打印布局信息
+	sb_print();
 }
