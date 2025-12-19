@@ -173,7 +173,7 @@ buf_freemem(N_BUFFER); /* 一段时间后清理无用缓存 */
 
 我为缓冲系统建立了一套“双轨制”结构：**哈希表负责“定位”，双向链表负责“置换”**。如图所示：
 
-![](picture/hash_link.png)
+![](pictures/hash_link.png)
 
 - **哈希桶 (`buf_hash` 数组)**：采用**链式哈希（Chaining）**处理冲突。通过 `block_num % BUFFER_HASH_SIZE`（取质数 61）将块号映射到对应的桶中。
 - **协同工作**：每个 `buffer_node_t` 同时具备两套指针：一套用于**维护 LRU 顺序的 `prev/next`**，另一套用于**哈希冲突链的 `hash_next`**。
