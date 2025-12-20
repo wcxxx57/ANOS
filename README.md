@@ -298,7 +298,7 @@ Byte 0: [ 1 1 0 1 0 0 0 0 ]
 
 **测试结果及相关标注**见：[test-3(1).png](pictures/test-3(1).png)和[test-3(2).png](pictures/test-3(2).png)，结果成功证明了 **`virtio` 驱动读写的正确性**以及**LRU 算法的正确实现**。
 
-### test4: 缓冲区满载与循环置换测试
+### test4：缓冲区满载与循环置换测试
 
 测试代码见[initcode.c](src/user/initcode.c) 的对应部分，该补充测试旨在验证当缓冲区达到容量上限（`N_BUFFER = 8`）时，**LRU 置换算法与哈希表同步的正确性**。测试分为四个阶段：
 
