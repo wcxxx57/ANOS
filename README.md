@@ -1,24 +1,28 @@
-# LAB-7: 文件系统 之 磁盘管理
+# LAB-8: 文件系统 之 数据组织与层次结构
 
-经过之前的实验，我们已经拥有了一个支持多进程调度的内核。在 Lab-7 中，我们将目光投向了**持久化存储**，围绕磁盘管理构建文件系统的基础设施，建立从**底层驱动**到**上层资源管理**的完整链路。
+**前言**
 
-**吴晨曦**：完成了 **缓冲系统（Buffer）** 的实现，文件系统的初始化逻辑，以及对应的系统调用和README文档。
+在lab-7中我们实现了block-level的磁盘管理能力
 
-**丁熙妍**：完成了 **位图管理（Bitmap）** 的实现，内核页表与设备映射的适配，磁盘中断的响应与处理，以及对应的系统调用和README文档。
+在此基础上, 本次实验将进一步考虑以下两个问题:
+
+1. 如果数据块的大小大于1个block, 如何组织和管理? (inode)
+
+2. 如何用人类更好理解的层次结构来组织和索引海量数据块? (dentry)
 
 ## 代码组织结构
 
 ```
-ANOS
+ECNU-OSLAB-2025-TASK
 ├── LICENSE        开源协议
 ├── .vscode        配置了可视化调试环境
 ├── registers.xml  配置了可视化调试环境
 ├── .gdbinit.tmp-riscv xv6自带的调试配置
 ├── common.mk      Makefile中一些工具链的定义
-├── Makefile       编译运行整个项目 (CHANGE)
+├── Makefile       编译运行整个项目
 ├── kernel.ld      定义了内核程序在链接时的布局
-├── pictures       README使用的图片目录 (CHANGE, 日常更新)
-├── README.md      实验报告 (CHANGE, 日常更新)
+├── picture        README使用的图片目录 (CHANGE)
+├── README.md      实验指导书 (CHANGE)
 └── src            源码
     ├── kernel     内核源码
     │   ├── arch   RISC-V相关
@@ -38,301 +42,606 @@ ANOS
     │   │   ├── cpu.c
     │   │   ├── print.c
     │   │   ├── uart.c
-    │   │   ├── utils.c
-    │   │   ├── method.h
+    │   │   ├── utils.c (CHANGE, 新增strlen函数)
+    │   │   ├── method.h (CHANGE)
     │   │   ├── mod.h
     │   │   └── type.h
     │   ├── mem    内存模块
     │   │   ├── pmem.c
-    │   │   ├── kvm.c (本实验补充, 内核页表增加磁盘相关映射 + vm_getpte处理pgtbl为NULL的情况)
+    │   │   ├── kvm.c
     │   │   ├── uvm.c
     │   │   ├── mmap.c
     │   │   ├── method.h
     │   │   ├── mod.h
     │   │   └── type.h
     │   ├── trap   陷阱模块
-    │   │   ├── plic.c (本实验补充, 增加磁盘中断相关支持)
+    │   │   ├── plic.c
     │   │   ├── timer.c
-    │   │   ├── trap_kernel.c (本实验补充, 在外设处理函数中识别和响应磁盘中断)
+    │   │   ├── trap_kernel.c
     │   │   ├── trap_user.c
     │   │   ├── trap.S
     │   │   ├── trampoline.S
     │   │   ├── method.h
-    │   │   ├── mod.h (CHANGE, include 文件系统模块)
+    │   │   ├── mod.h
     │   │   └── type.h
     │   ├── proc   进程模块
-    │   │   ├── proc.c (本实验补充, 在proc_return中调用文件系统初始化函数)
+    │   │   ├── proc.c
     │   │   ├── swtch.S
     │   │   ├── method.h
-    │   │   ├── mod.h (CHANGE, include 文件系统模块)
+    │   │   ├── mod.h
     │   │   └── type.h
     │   ├── syscall 系统调用模块
-    │   │   ├── syscall.c (本实验补充, 新增系统调用)
-    │   │   ├── sysfunc.c (本实验补充, 新增系统调用)
-    │   │   ├── method.h (CHANGE, 新增系统调用)
-    │   │   ├── mod.h (CHANGE, include文件系统模块)
-    │   │   └── type.h (CHANGE, 新增系统调用)
+    │   │   ├── syscall.c
+    │   │   ├── sysfunc.c
+    │   │   ├── method.h
+    │   │   ├── mod.h
+    │   │   └── type.h
     │   ├── fs     文件系统模块
-    │   │   ├── bitmap.c (本实验完成, bitmap相关操作)
-    │   │   ├── buf.c (本实验完成, 内存中的block缓冲区管理)
-    │   │   ├── fs.c (本实验完成, 文件系统相关)
-    │   │   ├── virtio.c (NEW, 虚拟磁盘的驱动)
-    │   │   ├── method.h (NEW)
-    │   │   ├── mod.h (NEW)
-    │   │   └── type.h (NEW)
-    │   └── main.c (CHANGE, 增加virtio_init)
+    │   │   ├── bitmap.c
+    │   │   ├── buffer.c
+    │   │   ├── inode.c (TODO, 核心工作)
+    │   │   ├── dentry.c (TODO, 核心工作)
+    │   │   ├── fs.c (TODO, 增加inode初始化逻辑和测试用例)
+    │   │   ├── virtio.c
+    │   │   ├── method.h (CHANGE)
+    │   │   ├── mod.h
+    │   │   └── type.h (CHANGE)
+    │   └── main.c
     ├── mkfs       磁盘映像初始化
-    │   ├── mkfs.c (NEW)
-    │   └── mkfs.h (NEW)
+    │   ├── mkfs.c (CHANGE, 更复杂的文件系统初始化)
+    │   └── mkfs.h (CHANGE)
     └── user       用户程序
-        ├── initcode.c (CHANGE, 日常更新)
+        ├── initcode.c
         ├── sys.h
         ├── syscall_arch.h
-        └── syscall_num.h (CHANGE, 日常更新)
+        └── syscall_num.h
 ```
 
-相对于上一个实验, 本实验主要增加了以下功能：
+**标记说明**
 
-- 实现了**虚拟磁盘驱动 (VirtIO)**，打通了内核与磁盘的通信渠道。
-- 实现了**缓冲系统(Buffer)**，构建了内存与磁盘间的数据交换桥梁，并利用哈希表进行了高速缓存优化。
-- 实现了**位图管理(Bitmap)**，为文件系统的元数据和数据块分配提供支持。
-- 完善了**硬件抽象层**，包括 **MMIO 内存映射**的适配以及 **PLIC 磁盘中断**的响应与分发。
+**NEW**: 新增源文件, 直接拷贝即可, 无需修改
 
-## 具体实现
+**CHANGE**: 旧的源文件发生了更新, 直接拷贝即可, 无需修改
 
-### 1. buf.c
+**TODO**: 你需要实现新功能 / 你需要完善旧功能
 
-在操作系统中，磁盘 I/O 的速度远慢于内存访问。为了解决这一速度失配问题，本次实验我们在 [buf.c](src/kernel/fs/buf.c) 中实现了一个**基于LRU（最近最少使用）算法的缓冲系统**。它是文件系统的“地基”，让上层文件系统可以**像操作内存数组一样读写磁盘块**（Block）。
+## mkfs: 带根目录的初始磁盘映像
 
-缓冲系统的实现基于以下**数据结构**：
+lab-7的初始磁盘映像虽然有inode_bitmap和inode_region, 但是并不存在真正的inode
 
-- **物理载体 (`buf_cache` 数组)**：静态分配的 `buffer_t` 数组，作为**缓冲区的实际存储空间**。每个 buffer 包含元数据（`block_num`, `ref`, `slk`）和数据指针（`data`）。其中`block_num`很重要，是连接**磁盘block**和**内存data**对应关系的桥梁。
-- **逻辑结构 (两级链表)**：
-  - **活跃链表 (Active List)**：存放当前正在被进程使用（`ref > 0`）的 buffer。
-  - **非活跃链表 (Inactive List)**：存放当前无人使用（`ref == 0`）的 buffer。
-  - 使用给出的**辅助函数 `insert_node`**可以将节点插入到**指定链表**（Active/Inactive）的**头部或尾部**。最活跃的buffer位于`head->next`，最不活跃的位于`head->prev`。
+在本次实验中, 我们首先添加了根目录 (root_inode)
 
-实现了以下`buf.c`中的**函数**：
+随后, 在根目录之下增加了四个目录项:
 
-- **`buffer_init`**：**初始化**缓冲系统，设置全局自旋锁并将所有buffer 节点有序归入非活跃链表 
-- **`buffer_get`**：根据块号**查找或置换 buffer**，并维护 LRU 状态
-- **`buffer_put`**：**buffer归还**，减少引用次数`ref--`，当 `ref==0`时，将其移入**非活跃链表头部**
-- **`buffer_read`**：在持有**睡眠锁**的安全前提下，将磁盘块数据**加载**至缓冲区的物理内存页 。
-- **`buffer_write`**：在持有**睡眠锁**的安全前提下，将缓冲区中已修改的数据**写回**磁盘对应的逻辑块 。
-- **`buffer_freemem`**：**清理无用buffer资源**，释放无人引用的物理页并清除映射关系
+- "." 和 "..": 特殊目录项, 用于描述相对路径, 本次实验不展开描述
 
-这些函数的**典型使用流程**如下：
+- "ABCD.txt" 和 "abcd.txt": 循环写入字母表(大写版本和小写版本)的普通文件
+
+请你阅读`mkfs.h`和`mkfs.c`来理解初始化过程的具体行为, 这将帮助你理解**inode**和**dentry**的概念
+
+## inode: 文件数据组织
+
+从磁盘角度来看, 文件就是由N个block构成的逻辑单元
+
+inode负责记录这样的逻辑结构, 主要依靠**index**字段和**size**字段
+
+**index字段的设计分成三个部分:**
+
+- 0 ~ INODE_INDEX_1 - 1: 直接映射(index[i] = data_block), 控制前面40KB空间 (小型文件)
+
+- INODE_INDEX_1 ~ INODE_INDEX_2 - 1: 一级间接映射(index[i] = index_block), 控制中间8MB空间 (中型文件)
+
+- INODE_INDEX_2 ~ INODE_INDEX_3 - 1: 二级间接映射(index[i] = index_index_block), 控制后面4GB空间 (大型文件)
+
+**这样设计的好处是:**
+
+- 小型文件的访问非常迅速 (直接访问inode就能直接获得data_block序号)
+
+- 能支持很大的文件 (以1个index_index_block和1024个index_block的额外访问开销为代价)
+
+- 中型文件的访问代价可控 (以2个index_block的额外访问开销为代价)
+
+**和之前的内核页表设计进行对比:**
+
+- index是各个文件的私有映射逻辑, 内核页表是系统全局的映射逻辑, 因此内存页面不存在前面热后面冷的性质
+
+- 因此, 页表是确定的三级间接映射, 文件映射则是直接映射、一级间接映射、二级间接映射相结合(按需启用)
+
+**关于size字段(单位是字节)的说明:**
+
+- 对于**INODE_TYPE_DATA**类型的inode, size除了代表有效的数据量, 还代表[0, size)的逻辑空间已经使用 (没有空洞)
+
+- 对于**INODE_TYPE_DIR**类型的inode, 我们假设它只使用1个block(index[0]记录), size只代表有效数据量 (接受空洞)
+
+**当你完全理解上述逻辑后, 我们开始进入具体的函数 (in inode.c)**
+
+首先实现帮助函数`free_data_blocks`和`locate_or_add_block`
+
+`free_data_blocks`本质是通过`bitmap_free_data`释放inode管理的所有block资源
+
+考虑到树形组织结构, 我们使用递归方法来实现这一点 (调用`__free_data_blocks`)
+
+注意: 起到索引作用的index_block和index_index_block也要释放
+
+`locate_or_add_block`负责将逻辑块号转译为物理块号 (例:inode的第一个逻辑块0对应物理块1120)
+
+转译过程中可能遇到目标逻辑块号恰好超过边界 (例:分配了N个逻辑块, 目标逻辑块号为N)
+
+这种时候需要新分配一个物理块, 使得目标逻辑块号合法
+
+比较复杂的情况: 新增data_block可能带来连锁反应 (新增index_index_block和新增index_block)
+
+这一点和页表的生长过程是类似的, 需要你细心和谨慎地处理
+
+之后实现数据流读写逻辑`inode_read_data`和`inode_write_data`
+
+它们的共同点在于: 以1个buffer为中间载体, 实现数据在磁盘块和通用内存空间之间的流转
+
+需要注意的一点: 写入逻辑可能涉及inode的修改 (包括index和size), 文件大小不能超过上限
+
+## inode: 生命周期管理
+
+我们使用**inode_cache**来管理内存中的inode资源, 通过**lk_inode_cache**来保护它
+
+这种组织结构在`mmap`、`proc`、`buffer`等地方多次遇到, 这里也是类似的 (只是没有选择使用双向循环链表做加速)
+
+请你完成`inode_init`来初始化资源, 并放入`fs_init`的合适位置
+
+下一个需要思考的问题是: **inode in disk** 与 **inode in memory**的区别与互相更新
 
 ```c
-buffer_init() /* 缓冲系统初始化-在fs_init中进行*/
-buffer_get (获取) -> 通过缓冲区读写数据 -> buffer_write (如有修改则写回) -> buffer_put (归还)
-buf_freemem(N_BUFFER); /* 一段时间后清理无用缓存 */
+/* 磁盘上的索引节点(64 Byte) */
+typedef struct inode_disk {
+	short type;                          // 文件类型
+	short major;                         // 主设备号
+	short minor;                         // 次设备号
+	short nlink;                         // 链接数
+	unsigned int size;                   // 文件数据长度(字节)
+	unsigned int index[INODE_INDEX_3];   // 数据存储位置(10+2+1)
+} inode_disk_t;
+
+/* 内存里的索引节点 */
+typedef struct inode {
+	inode_disk_t disk_info;           // 持久化信息 (slk保护)
+	bool valid_info;                  // disk_info的有效性 (slk保护)
+	uint32 inode_num;                 // inode序号 (slk保护)
+	uint32 ref;                       // 引用数 (lk_inode_cache保护)
+	sleeplock_t slk;                  // 睡眠锁
+} inode_t;
 ```
 
-并通过以下**双锁机制**进行了**并发控制**：
+相比**inode_disk_t**, **inode_t** 增加了四个字段:
 
-- **全局自旋锁 (`lk_buf_cache`)**：
-  - **保护对象**：Buffer Cache 的链表结构、引用计数 `ref`、块号映射 `block_num`。
-  - **特点**：持有时间极短，仅在链表操作期间持有。
-- **缓冲区睡眠锁 (`b->slk`)**：
-  - **保护对象**：Buffer 内部的实际数据 (`data`)。
-  - **特点**：由于磁盘 I/O (`virtio_disk_rw`) 是耗时操作，持有该锁的进程允许**睡眠**，从而让出 CPU 给其他进程调度。
+- valid_info: inode_cache miss后返回的空闲inode, 它的disk_info是无效的, 需要特殊标记
 
-- 同时，在 `buffer_get` 中，我严格遵守了 **“先释放全局自旋锁，再获取缓冲区睡眠锁”** 的顺序，**防止系统发生死锁**
+- ref: inode_cache中的inode可以被多个使用者关注, 需要记录一下引用数
 
-接下来重点介绍一下我们在这部分实现的**`buffer_get`的核心逻辑**和**基于哈希表的高速缓存优化**。
+- inode_num: 进行**inode_disk_t**和**inode_t**的互相更新时, 需要知道磁盘中的inode位置
 
-#### 核心逻辑：buffer_get 的三级流水线
+- slk: 保证资源的按需共享, 由于磁盘读写非常耗时, 所以采用睡眠锁而非自旋锁
 
-`buffer_get(uint32 block_num)` 是缓冲系统中最复杂的核心接口，我们采用了如下的**三级查找策略**：
+之后请你实现`inode_rw`完成此磁盘inode_region中的inode和内存inode_cache中的inode的互相更新
 
-- **一级查找：活跃链表命中 (Active Hit)**
+- 初始化时: 通常是 磁盘->内存 的更新流 (读入一个新的inode)
 
-目标块正在被其他进程使用，或者非常热门。在`active` 链表中寻找，找到后将该节点移动到活跃链表的`head->next`，增加引用计数 `ref`。能够直接复用，无需任何内存分配或磁盘 I/O。
+- 修改时: 通常时 内存->磁盘 的更新流 (inode中的字段做了修改, 需要写回)
 
-- **二级查找：非活跃链表复活 (Inactive Hit)**
+下面实现典型的inode生命周期控制函数 (按照从生到死的过程)：
 
-目标块之前被访问过，目前没人用，但还未被淘汰。在 `inactive` 链表中寻找，找到后将该节点从不活跃链表“提拔”到活跃链表的`head->next`，引用计数 `ref` 置 1。
+- `inode_create`: 认为某个inode原本不存在, 先在内存里创建副本, 之后写入inode_region
 
-注意此时需检查 `buf->data` 是否为 `NULL`（可能此前被 `freemem` 回收了物理页，或者`buffer_init`初始化后初次使用）。若为空，还需要调用 `pmem_alloc` 重新分配物理内存，并**持有锁**调用 `buffer_read` 从磁盘**加载数据**。
+- `inode_get`: 认为某个inode存在于内存inode_cache或者磁盘inode_region, 获取使用权
 
-- **三级处理：缓存未命中与置换 (Cache Miss & Eviction)**
+- `inode_dup`: 复制inode使用权 (例如执行fork操作时)
 
-内存中没有目标块，且没有空闲位置，必须淘汰旧块。逻辑如下：
+- `inode_lock`: 获取睡眠锁以保证独占inode
 
-1. **选受害者**：从非活跃链表的`head->prev`取出一个 `victim`节点。
-2. **重映射**：修改其 `block_num` 为新的目标块号。
-3. **激活**：将其移入活**跃链表尾部**（`head->prev`），`ref` 置 1。
-4. **I/O**：分配物理内存（如需），并**持有锁**调用 `buffer_read` 从磁盘**加载数据**。
+- `inode_unlock`: 释放睡眠锁以支持共享inode
 
-#### 性能优化：基于哈希表的 $O(1)$ 查找
+- `indoe_put`: 释放inode的使用权(ref--), 可能触发inode的磁盘删除操作
 
-在初始实现中，`buffer_get` 需要**遍历活跃和非活跃两个链表来寻找目标块**，时间复杂度为 $O(N)$。当缓冲区规模扩大时，线性扫描将成为文件系统的性能瓶颈。因此，在石老师理论课的启发下，我引入了**哈希表（Hash Table）**机制，实现了查找效率的跨越式提升。
+- `inode_delete`: 删除磁盘里的某个node, 并释放它管理的data_block资源
 
-##### 优化的结构设计
+最后, 我们提供了`inode_print`函数来输出某个inode的具体信息
 
-我为缓冲系统建立了一套“双轨制”结构：**哈希表负责“定位”，双向链表负责“置换”**。如图所示：
+## dentry: 从数字索引到字符串索引
 
-![](pictures/hash_link.png)
+**有了inode的文件系统世界是什么样的呢?**
 
-- **哈希桶 (`buf_hash` 数组)**：采用**链式哈希（Chaining）**处理冲突。通过 `block_num % BUFFER_HASH_SIZE`（取质数 61）将块号映射到对应的桶中。
-- **协同工作**：每个 `buffer_node_t` 同时具备两套指针：一套用于**维护 LRU 顺序的 `prev/next`**，另一套用于**哈希冲突链的 `hash_next`**。
+- 我们可以先用**inode_num**搜索**inode_region**, 找到某个inode (定位元数据)
 
-##### 优化的操作逻辑
+- 再通过inode里的索引信息, 按照逻辑顺序找到它管理的若干**block** (定位数据)
 
-- **高速命中**：在 `buffer_get` 开始处，首先通过 `hash_find` 在 $O(1)$ 时间内定位节点。如果命中，直接进行链表位置调整（移至活跃链表）并返回。
+对于计算机来说, 这套逻辑已经足够高效了, 它建立了从数字到离散数据流的映射关系
 
-  ```c
-  /* 优化前：O(N)复杂度的链表遍历查找 */
-  for (node = buf_head_active.next; node != &buf_head_active; node = node->next) {
-      if (node->buf.block_num == block_num) {
-          /* 缓存命中 */
-      }
-  }
-  /* 优化后：O(1)复杂度的直接查找 */    
-  buffer_node_t *node = hash_find(block_num);
-  ```
+对人来说, 还存在一个致命的问题:**inode_num**太抽象了, 人类很难记住它的含义, 人更好理解的是**name**
 
-- **动态维护**：在**Cache Miss**发生置换时，除了修改 `block_num`，还需要同步调用 `hash_remove` 移除受害者（Victim）的旧映射，并调用 `hash_insert` 建立新块号的映射。
+我们可以把 **name=hello.c** 理解为一个"hello world"程序, 但是不能把 **inode_num=15** 理解成任何东西
 
-  ```c
-  // 维护哈希：移除旧映射，插入新映射
-  hash_remove(victim);
-  victim->buf.block_num = block_num;
-  hash_insert(victim);
-  ```
+**因此, 我们决定增加一层映射逻辑: name -> inode_num**
 
-- **内存回收同步**：在 `buffer_freemem` 回收物理页并重置 `block_num` 时，**同步从哈希表中摘除节点**，防止失效的映射导致后续查找异常。
-
-### 2. fs.c & proc.c
-
-在建立好底层的缓冲系统后，我们在 [fs.c](src/kernel/fs/fs.c)中完成了**文件系统初始化的函数**并在[proc.c](src/kernel/proc/proc.c)中**合适的时机**进行调用。
-
-- **文件系统初始化与超级块读入**：
-
-  `buffer_init`缓冲区初始化 ->`buffer_get` 读入磁盘第 0 号块（Superblock）->将缓冲区中的内容拷贝到内核全局变量 `sb` 中->调用 `sb_print` 输出磁盘布局信息便于调试验证 。
-
-- **初始化时机**：由于磁盘读取涉及进程睡眠，`fs_init` 不能在内核启动早期的关中断环境下运行。我们选择在 `proczero` 进程第一次通过 `proc_return` 返回用户态前这一“最早安全时机”执行 。
-
-  ```c
-  static void proc_return()
-  {
-      proc_t *p = myproc();
-      spinlock_release(&p->lk); 
-      fs_init(); // <---初始化文件系统的时机
-      trap_user_return();
-  }
-  ```
-
-### 3. bitmap.c
-
-在文件系统中，我们需要高效地管理成千上万个 inode 和 data block 的分配状态。**位图 (Bitmap)** 是最经典且节省空间的解决方案：使用 **1 个 bit** 来标记 1 个资源的占用情况（0 代表空闲，1 代表占用）。
-
-为了形象地展示 Bitmap 的工作原理，我绘制了下图：
-
-```
-磁盘布局: [ Superblock | Bitmap Block 0 | ... | Data Block 0 | Data Block 1 | ... ]
-                            |
-                            v
-Bitmap Block 0 内部:
-Byte 0: [ 1 1 0 1 0 0 0 0 ] 
-          ^ ^ ^
-          | | +-- 对应 Data Block 2 （ 0 表示空闲，可分配 ）
-          | +---- 对应 Data Block 1 （ 1 表示已占用 ）
-          +------ 对应 Data Block 0 （ 1 表示已占用 ）
+```c
+/* 目录项(64 Byte) */
+typedef struct dentry {
+    char name[MAXLEN_FILENAME];       // 文件名
+    unsigned int inode_num;           // 索引节点序号
+} dentry_t;
 ```
 
-在 `bitmap.c`中，我实现了**从底层位操作到上层资源管理**的完整逻辑，具体包括对 inode 和 data block 的**查找、分配与释放**：
+更具体的设计方案:
 
-#### 底层原子操作：查找与置位
+- 我们将第一个inode设为**根节点**, 记住它的inode_num为**ROOT_INODE(0)**
 
-底层的核心函数是 `bitmap_search_and_set`，它负责在一个具体的 bitmap block 中寻找空闲位：
+- 根节点包括 `BLOCKSIZE/sizeof(dentry_t)` 个**dentry槽位**
 
-- 首先调用 `buffer_get` 读取 bitmap block 到内存。
-- 通过双重循环遍历 block 中的每个字节和每个位：
-  - 如果一个**字节**的值为 `0xFF`（即 8 位全被占用），且该字节完全在有效范围内，则直接跳过。
-  - 否则，**逐位**检查该字节，寻找第一个为 `0` 的空闲位。
-  - 找到后，通过**位运算** `|= (1U << j)` 将其置 1，并立即调用 `buffer_write` 将修改**写回磁盘**，最后释放 buffer。
-- 需要注意的是：由于磁盘的总资源数往往不是 `BLOCK_SIZE * 8` 的整数倍，**最后一个 bitmap block 通常是不满的**，因此函数接收 `valid_count` 参数，在检查位时进行**边界判断**，避免防止分配出超出磁盘容量的无效资源。
+- 其他inode都通过注册1个dentry链接到根节点上, 形成**1-N**的二层树形结构
 
-#### 上层资源管理：分配与释放
+- 查找逻辑从: inode_num->数据 变成了 ROOT_INODE->name->inode_num->数据
 
-基于底层的位操作，我们实现了对 inode 和 data block 的分配与释放：`bitmap_alloc_block/inode` 和 `bitmap_free_block/inode`。
+用户只需要记住根节点的inode序号和目标inode的名称即可, 不需要知道目标inode的序号
 
-- **资源分配**：
-  - 这是一个**跨 Block 的搜索过程**，函数根据 Superblock 中记录的 bitmap 起始位置和块数，循环遍历每一个 bitmap block。
-  - 遍历过程中，动态计算每个 block 的 `valid_count`（**只有最后一个 block 需要特殊截断**），并调用**底层函数 `bitmap_search_and_set`** 进行查找。
-  - 一旦找到空闲位，通过公式 `全局ID = 起始ID + 已扫描位数 + 块内偏移` 计算出最终的 `block_num` 或 `inode_num`并返回。
+请你实现dentry的槽位管理逻辑:
 
-- **资源释放**：
-  - 释放过程相对简单，就是**资源分配的逆过程**。
-  - 根据传入的全局 ID，计算出它属于第几个 bitmap block 以及在该 block 中的第几个 bit。
-  - 调用底层函数 **`bitmap_clear`**，通过**位运算** `&= ~(1U << bit_offset)` 将目标位清零，并调用 `buffer_write` 将修改**写回磁盘**，完成释放。
+- `dentry_search`: 在目录中查找某个dentry
 
-------
+- `dentry_create`: 创建1个新的dentry
 
-## 测试与修复
+- `dentry_delete`: 删除1个旧的dentry
 
-### test1：文件系统初始化与超级块读取的基础测试
+我们还提供了一个`dentry_print`用于打印某个目录下的所有有效dentry (dentry->name[0]!='\0'说明有效)
 
-**测试代码**见[initcode.c](src/user/initcode.c) 的注释对应部分，在用户程序打印 "hello, world!" 之前，内核在 `proc_return` 时期调用了 `fs_init`。底层的 `virtio_disk_rw` 会被触发，读取磁盘第 0 块（Superblock）并通过 `sb_print` 打印磁盘元数据信息。
+## path: 从扁平化到层次化
 
-**测试结果**见：[test-1.png](pictures/test-1.png)，可以看到 Superblock 信息正确输出，验证了磁盘驱动与文件系统初始化的连通性。
+**1-N**的扁平化树形结构在inode数量较小时是好用的
 
-### test2：Bitmap 资源分配与释放的压力测试
+随着inode数量的增长: 一方面, 根节点的槽位不够用; 另一方面, 不方便人做分类查找和管理
 
-**测试代码**见[initcode.c](src/user/initcode.c) 的注释对应部分，测试逻辑分为三阶段：
+因此, 我们要将扁平化的数拓展为层次化的树, 支持`1-N-M-K...`的多层结构
 
-1. **分配**：连续申请 20 个 block，检查 bitmap 是否全为 1。
-2. **间隔释放**：释放偶数索引的 block，检查 bitmap 是否变为 `0101...` 的间隔状态。
-3. **完全释放**：释放剩余奇数索引的 block，检查 bitmap 是否全变回 0。 （**Inode 的测试逻辑同理**）
+管理这样的结构需要多个目录类型的inode (仅靠根节点是不够的)
 
-**测试结果**见：[test-2.png](pictures/test-2.png)，可以看到位图状态从全 1 到间隔 0/1 再到全 0，完美符合预期。
+描述树上的一个节点需要使用"文件路径(path)", 本次实验我们只考虑绝对路径
 
-### test3：缓冲系统核心逻辑的综合测试
+例如: /AAA/BBB/CCC/file.txt、/AABB/CC、////AAA///CC//BB/file.txt等
 
-测试代码见[initcode.c](src/user/initcode.c) 的对应部分，测试包含两个阶段：
+以/AAA/BBB/CCC.txt为例, 解释**路径解析**过程:
 
-1. **读写测试**：`Get` -> `Write ("ABC...")` -> `Put` -> `Flush` -> `Get` -> `Read`。验证数据是否真正写入磁盘（持久化），以及 `buffer_read` 能否正确加载数据。
-2. **LRU 与生命周期测试**：连续 `Get` 多个 Block，观察活跃链表（Active）的变化；执行 `Put` 后，观察节点是否移动到非活跃链表（Inactive）；执行 `Flush` 后，验证非活跃节点是否被回收。
+- step-0: 通过ROOT_INODE(0)获得root_inode
 
-**测试结果及相关标注**见：[test-3(1).png](pictures/test-3(1).png)和[test-3(2).png](pictures/test-3(2).png)，结果成功证明了 **`virtio` 驱动读写的正确性**以及**LRU 算法的正确实现**。
+- step-1: 查询root_inode的dentry槽位, 发现"AAA"对应的inode_num为A1
 
-### test4: 缓冲区满载与循环置换测试
+- step-2: 通过A1获得AAA_inode
 
-测试代码见[initcode.c](src/user/initcode.c) 的对应部分，该补充测试旨在验证当缓冲区达到容量上限（`N_BUFFER = 8`）时，**LRU 置换算法与哈希表同步的正确性**。测试分为四个阶段：
+- step-3: 查询AAA_inode的dentry槽位, 发现"BBB"对应的inode_num为B1
 
-1. **满载填充**：连续获取 8 个不同的磁盘块（7000-7007），观察它们全部进入 **Active 链表**。
-2. **释放入队**：将这 8 个块全部归还。根据 LRU 逻辑，它们会按顺序进入 **Inactive 链表**，其中最早被归还的 **7000 号块**将位于**链表尾部**（因为最久未使用）。
-3. **强制置换**：获取 2 个全新的块（7008, 7009）。由于缓冲区已满，系统必须从 Inactive 链表尾部踢出“受害者”。预期结果是 **7000 和 7001 被置换**，其对应的 buffer 节点被重新映射给 7008 和 7009。
-4. **哈希同步验证**：重新获取已被踢出的 7000 号块。此时哈希表应无法找到该块，系统必须再次触发置换逻辑。预期结果是**踢出下一个受害者 7002**，并重新从磁盘加载 7000 号块的数据。
+- step-4: 通过B1获得BBB_inode
 
-**测试结果及相关标注**见：[test-4(1).png](pictures/test-4(1).png)和[test-4(2).png](pictures/test-4(2).png)，结果成功证明了证明了 **LRU 置换策略**准确地选择了最久未使用的节点，并且**哈希表在置换发生时能够正确地删除旧映射并插入新映射**。
+- step-5: 查询BBB_inode的dentry槽位, 发现"CCC.txt"对应的inode_num为C1
 
-------
+- step-6: 通过C1获得CCC_inode, 进行后续的读写行为
 
-## 总结与思考
+我们提供了`get_element`来逐步处理**path**和提取**name**, 请你先理解它的工作逻辑
 
-- **硬件抽象与驱动开发的严谨性**
-  在实现 VirtIO 驱动和适配内核页表的过程中，我们深刻体会到了操作系统作为“硬件管家”的职责：
+你需要利用`get_element`、`inode_get`、`dentry_search`等函数来实现`__path_to_inode`
 
-  > **驱动程序直接操作物理内存（DMA）和寄存器（MMIO）**，任何一个页表映射的缺失（如 `kvm_init` 中漏掉设备地址映射）或中断使能位的遗漏（如 PLIC 配置错误），都会导致系统静默失败或崩溃。
-  
-  这让我们认识到，在内核开发中，必须严格遵守硬件规范，建立清晰的地址空间视图。
+这个函数完成了从**path**到**目标inode**的翻译过程, 是`path_to_inode`和`path_to_parent_inode`的底层
 
-- **缓存一致性与性能权衡**
-  缓冲系统（Buffer）的设计是本次实验的核心难点。我们不仅要通过 **LRU 算法**解决**内存有限性与磁盘数据无限性之间的矛盾**，还要引入**哈希表**来解决 **$O(N)$ 线性查找的性能瓶颈**。
-  在实现过程中，我们发现“**缓存置换**”是一个牵一发而动全身的操作：
+## 测试用例
 
-  > 它涉及链表节点的移动、哈希映射的更新以及磁盘 I/O 的触发。如何保证这三者在并发环境下的状态一致性（特别是**双锁机制的运用**），是保证文件系统数据不损坏的关键。
+考虑到测试的便捷性, 请直接在`fs_init`的最后位置添加测试逻辑
 
-- **资源管理的粒度与边界**
-  Bitmap 模块的实现让我们对资源管理有了更具象的理解。虽然位图原理简单，但在处理“**磁盘总块数非 8 的倍数**”这一边界情况时，必须**引入 `valid_count` 进行精确控制**，否则会导致分配出不存在的物理块。这种**对边界条件的敏感度**，是操作系统内核代码健壮性的重要体现。
-  此外，从底层的位操作到上层的 Block/Inode 分配接口的封装，也体现了操作系统**分层设计**的思想。
+**测试1: inode的访问 + 创建 + 删除**
 
-- **异步 I/O 与进程调度的协同**
-  本次实验打通了从磁盘中断到进程唤醒的完整链路:
-  
-  > 磁盘 I/O 是**慢速操作**，必须**依赖中断机制实现异步通知**。通过 PLIC 的配置和 Trap Handler 的分发，我们让因等待 I/O 而睡眠的进程能够在数据就绪时被及时唤醒。
-  
-  这让我们理解了操作系统是如何利用“**中断**”这一机制，**在慢速外设和高速 CPU 之间建立起高效的协作模式**，避免了 CPU 的忙等待浪费。
+预期结果见 `./picture/test-1.png`
+
+```c
+    /* fs_init in fs.c */
+
+	printf("============= test begin =============\n\n");
+
+	inode_t *rooti, *ip_1, *ip_2;
+	
+	rooti = inode_get(ROOT_INODE);
+	inode_lock(rooti);
+	inode_print(rooti, "root");
+	inode_unlock(rooti);
+
+	/* 第一次查看bitmap */
+	bitmap_print(false);
+
+	ip_1 = inode_create(INODE_TYPE_DIR, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
+	ip_2 = inode_create(INODE_TYPE_DATA, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
+	inode_lock(ip_1);
+	inode_lock(ip_2);
+	inode_dup(ip_2);
+
+	inode_print(ip_1, "dir");
+	inode_print(ip_2, "data");
+	
+	/* 第二次查看bitmap */
+	bitmap_print(false);
+
+	ip_1->disk_info.nlink = 0;
+	ip_2->disk_info.nlink = 0;
+	inode_unlock(ip_1);
+	inode_unlock(ip_2);
+	inode_put(ip_1);
+	inode_put(ip_2);
+
+	/* 第三次查看bitmap */
+	bitmap_print(false);
+
+	inode_put(ip_2);
+	
+	/* 第四次查看bitmap */
+	bitmap_print(false);
+
+	printf("============= test end =============\n\n");
+
+	while(1);
+```
+
+**测试2: 写入和读取inode管理的数据**
+
+注意: 大文件的写入过程较慢, 在助教的虚拟机中需要2分钟
+
+预期结果见 `./picture/test-2.png`
+
+```c
+    /* fs_init in fs.c */
+
+	printf("============= test begin =============\n\n");
+
+	inode_t *ip_1, *ip_2;
+	uint32 len, cut_len;
+
+	/* 小批量读写测试 */
+
+	int small_src[10], small_dst[10];
+	for (int i = 0; i < 10; i++)
+		small_src[i] = i;
+	
+	ip_1 = inode_create(INODE_TYPE_DATA, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
+	inode_lock(ip_1);
+	inode_print(ip_1, "small_data");
+
+	printf("writing data...\n\n");
+	cut_len = 10 * sizeof(int);
+	for (uint32 offset = 0; offset < 400 * cut_len; offset += cut_len) {
+		len = inode_write_data(ip_1, offset, cut_len, small_src, false);
+		assert(len == cut_len, "write fail 1!");
+	}
+	inode_print(ip_1, "small_data");
+
+	len = inode_read_data(ip_1, 120 * cut_len + 4, cut_len, small_dst, false);
+	assert(len == cut_len, "read fail 1!");
+	printf("read data:");
+	for (int i = 0; i < 10; i++)
+		printf(" %d", small_dst[i]);
+	printf("\n\n");
+
+	ip_1->disk_info.nlink = 0;
+	inode_unlock(ip_1);
+	inode_put(ip_1);
+
+	/* 大批量读写测试 */
+
+	char *big_src, big_dst[9];
+	big_dst[8] = 0;
+
+	/* 申请五个连续物理页面 (初始化阶段, 通常来说能拿到连续的) */
+	big_src = pmem_alloc(true);
+	assert(pmem_alloc(true) == big_src + PGSIZE, "contiguous fail!");
+	assert(pmem_alloc(true) == big_src + PGSIZE * 2, "contiguous fail!");
+	assert(pmem_alloc(true) == big_src + PGSIZE * 3, "contiguous fail!");
+	assert(pmem_alloc(true) == big_src + PGSIZE * 4, "contiguous fail!");
+
+	for (uint32 i = 0; i < 5 * (PGSIZE / 8); i++)
+		for (uint32 j = 0; j < 8; j++)
+			big_src[i * 8 + j] = 'A' + j;
+
+	ip_2 = inode_create(INODE_TYPE_DATA, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
+	inode_lock(ip_2);
+	inode_print(ip_2, "big_data");
+
+	printf("writing data...\n\n");
+	cut_len = PGSIZE * 4 + 1110;
+	for (uint32 offset = 0; offset < cut_len * 10000; offset += cut_len)
+	{
+		len = inode_write_data(ip_2, offset, cut_len, big_src, false);
+		assert(len == cut_len, "write fail 2!");
+	}
+	inode_print(ip_2, "big_data");
+
+	len = inode_read_data(ip_1, cut_len * 10000 - 8, 8, big_dst, false);
+	assert(len == 8, "read fail 2");
+	printf("read data: %s\n", big_dst);
+
+
+	ip_2->disk_info.nlink = 0;
+	inode_unlock(ip_2);
+	inode_put(ip_2);
+
+	pmem_free((uint64)big_src, true);
+	pmem_free((uint64)big_src + PGSIZE, true);
+	pmem_free((uint64)big_src + PGSIZE * 2, true);
+	pmem_free((uint64)big_src + PGSIZE * 3, true);
+	pmem_free((uint64)big_src + PGSIZE * 4, true);
+
+
+	printf("============= test end =============\n");
+
+	while(1);
+```
+
+**测试3: 目录项的增加、删除、查找操作**
+
+预期结果见 `./picture/test-3.png`
+
+```c
+    /* fs_init in fs.c */
+	printf("============= test begin =============\n\n");
+
+	inode_t *rooti, *ip_1, *ip_2, *ip_3;
+	uint32 inode_num_1, inode_num_2, inode_num_3;
+	uint32 len, cutlen, offset;
+	char tmp[10];
+
+	tmp[9] = 0;
+	cutlen = 9;
+	rooti = inode_get(ROOT_INODE);
+
+	/* 搜索预置的dentry */
+
+	inode_lock(rooti);
+	inode_num_1 = dentry_search(rooti, "ABCD.txt");
+	inode_num_2 = dentry_search(rooti, "abcd.txt");
+	inode_num_3 = dentry_search(rooti, ".");
+	if (inode_num_1 == INVALID_INODE_NUM || 
+		inode_num_2 == INVALID_INODE_NUM || 
+		inode_num_3 == INVALID_INODE_NUM) {
+		panic("invalid inode num!");
+	}
+	dentry_print(rooti);
+	inode_unlock(rooti);
+
+	ip_1 = inode_get(inode_num_1);
+	inode_lock(ip_1);
+	ip_2 = inode_get(inode_num_2);
+	inode_lock(ip_2);
+	ip_3 = inode_get(inode_num_3);
+	inode_lock(ip_3);
+
+	inode_print(ip_1, "ABCD.txt");
+	inode_print(ip_2, "abcd.txt");
+	inode_print(ip_3, "root");
+
+	len = inode_read_data(ip_1, 0, cutlen, tmp, false);
+	assert(len == cutlen, "read fail 1!");
+	printf("\nread data: %s\n", tmp);
+
+	len = inode_read_data(ip_2, 0, cutlen, tmp, false);
+	assert(len == cutlen, "read fail 2!");
+	printf("read data: %s\n\n", tmp);
+
+	inode_unlock(ip_1);
+	inode_unlock(ip_2);
+	inode_unlock(ip_3);
+	inode_put(ip_1);
+	inode_put(ip_2);
+	inode_put(ip_3);
+
+	/* 创建和删除dentry */
+	inode_lock(rooti);
+
+	ip_1 = inode_create(INODE_TYPE_DIR, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);	
+	offset = dentry_create(rooti, ip_1->inode_num, "new_dir");
+	inode_num_1 = dentry_search(rooti, "new_dir");
+	printf("new dentry offset = %d\n", offset);
+	printf("new dentry inode_num = %d\n\n", inode_num_1);
+	
+	dentry_print(rooti);
+
+	inode_num_2 = dentry_delete(rooti, "new_dir");
+	assert(inode_num_1 == inode_num_2, "inode num is not equal!");
+
+	dentry_print(rooti);
+
+	inode_unlock(rooti);
+	inode_put(rooti);
+
+	printf("============= test end =============\n");
+
+	while(1);
+```
+
+**测试4: 文件路径的解析**
+
+预期结果见 `./picture/test-4.png`
+
+```c
+    /* fs_init in fs.c */
+
+    printf("============= test begin =============\n\n");
+
+	inode_t *rooti, *ip_1, *ip_2, *ip_3, *ip_4, *ip_5;
+	
+	/* 准备测试环境 */
+
+	rooti = inode_get(ROOT_INODE);
+	ip_1 = inode_create(INODE_TYPE_DIR, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
+	ip_2 = inode_create(INODE_TYPE_DIR, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
+	ip_3 = inode_create(INODE_TYPE_DATA, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
+	
+	inode_lock(rooti);
+	inode_lock(ip_1);
+	inode_lock(ip_2);
+	inode_lock(ip_3);
+
+	if (dentry_create(rooti, ip_1->inode_num, "AABBC") == -1)
+		panic("dentry_create fail 1!");
+	if (dentry_create(ip_1, ip_2->inode_num, "aaabb") == -1)
+		panic("dentry_create fail 2!");
+	if (dentry_create(ip_2, ip_3->inode_num, "file.txt") == -1)
+		panic("dentry_create fail 3!");
+
+	char tmp1[] = "This is file context!";
+	char tmp2[32];
+	inode_write_data(ip_3, 0, sizeof(tmp1), tmp1, false);
+
+	inode_rw(rooti, true);
+	inode_rw(ip_1, true);
+	inode_rw(ip_2, true);
+
+	inode_unlock(rooti);
+	inode_unlock(ip_1);
+	inode_unlock(ip_2);
+	inode_unlock(ip_3);
+	inode_put(rooti);
+	inode_put(ip_1);
+	inode_put(ip_2);
+	inode_put(ip_3);
+
+	char *path = "///AABBC///aaabb/file.txt";
+	char name[MAXLEN_FILENAME];
+
+	ip_4 = path_to_inode(path);
+	if (ip_4 == NULL)
+		panic("invalid ip_4");
+
+	ip_5 = path_to_parent_inode(path, name);
+	if (ip_5 == NULL)
+		panic("invalid ip_5");
+	
+	printf("get a name = %s\n\n", name);
+
+	inode_lock(ip_4);
+	inode_lock(ip_5);
+
+	inode_print(ip_4, "file.txt");
+	inode_print(ip_5, "aaabb");
+
+	inode_read_data(ip_4, 0, 32, tmp2, false);
+	printf("read data: %s\n\n", tmp2);
+
+	inode_unlock(ip_4);
+	inode_unlock(ip_5);
+	inode_put(ip_4);
+	inode_put(ip_5);
+
+	printf("============= test end =============\n");
+```
+
+**尾声**
+
+本次实验我们实现了两个文件系统的基石: inode 和 dentry
+
+它们分别定义了文件系统的数据组织逻辑和层次化逻辑, 希望能帮助你理解文件系统的构建逻辑
+
+在lab-9中, 我们将先基于这两块基石构建**普通文件和目录文件**的管理逻辑
+
+之后, 秉持**一切皆文件**的Linux设计哲学, 我们还将介绍一类特殊的文件——**设备文件**
+
+最后, 我们还将讨论进程模块与文件系统的关系, 并补全进程模块的最后一块拼图——**proc_exec**
+
+**lab-9 既是文件系统的最终章、也是内核全系统的粘合剂、还是迄今为止最困难的终极考核!**
