@@ -78,7 +78,7 @@ ECNU-OSLAB-2025-TASK
     │   │   └── type.h
     │   ├── fs     文件系统模块
     │   │   ├── bitmap.c
-    │   │   ├── buffer.c
+    │   │   ├── buf.c
     │   │   ├── inode.c (TODO, 核心工作)
     │   │   ├── dentry.c (TODO, 核心工作)
     │   │   ├── fs.c (TODO, 增加inode初始化逻辑和测试用例)

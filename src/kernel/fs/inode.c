@@ -21,7 +21,34 @@ void inode_init()
 */
 static bool __free_data_blocks(uint32 block_num, uint32 level)
 {
+	if (block_num == 0)
+		return true; // 遇到空的block_num，说明是文件末尾
 
+	// level 0：数据块，直接释放
+	if (level == 0) {
+		bitmap_free_block(block_num);
+		return false; // 不是文件末尾
+	}
+
+	// level > 0：索引块，需要递归释放其指向的子块
+	buffer_t *buf = buffer_get(block_num);
+	uint32 *index_list = (uint32 *)buf->data;
+	// 一个 block 中包含 BLOCK_SIZE / 4 个 uint32 索引
+	uint32 n_index = BLOCK_SIZE / sizeof(uint32);
+	bool meet_empty = false;
+
+	// 递归释放子块
+	for (int i = 0; i < n_index; i++) {
+		if (__free_data_blocks(index_list[i], level - 1)) {
+			meet_empty = true;
+			break; // 遇到空的block_num，停止释放
+		}
+	}
+
+	buffer_put(buf);
+	// 释放当前索引块本身
+	bitmap_free_block(block_num);
+	return meet_empty;
 }
 
 /* 
@@ -65,7 +92,158 @@ static void free_data_blocks(uint32 *inode_index)
 */
 static uint32 locate_or_add_block(uint32 *inode_index, uint32 logical_block_num)
 {
+	uint32 block_num;
+	uint32 *index_table;
+	buffer_t *buf1 = NULL, *buf2 = NULL;
+    uint32 result = -1;
 
+	// 1. 直接映射范围 (0 ~ 9)
+    if (logical_block_num < INODE_INDEX_1){
+		block_num = inode_index[logical_block_num];
+		if (block_num == 0) {
+			// 需要分配新的block
+			block_num = bitmap_alloc_block();
+			if (block_num == (uint32)-1)
+				return -1; // 分配失败
+			inode_index[logical_block_num] = block_num;
+			// 新分配的块需要清零
+			buffer_t *new_buf = buffer_get(block_num);
+			memset(new_buf->data, 0, BLOCK_SIZE);
+			buffer_write(new_buf);
+			buffer_put(new_buf);
+		}
+		return block_num;
+	}
+
+	logical_block_num -= INODE_INDEX_1;
+
+	// 2. 一级间接映射范围 (10 ~ 10+2048-1)
+	// 每个一级索引块控制 1024 个数据块
+	// INODE_INDEX_2 - INODE_INDEX_1 = 2 个一级索引槽位
+	if (logical_block_num < (INODE_INDEX_2 - INODE_INDEX_1) * (BLOCK_SIZE / 4)){
+		uint32 l1_idx = logical_block_num / (BLOCK_SIZE / 4); // 第几个一级索引块
+		uint32 l1_off = logical_block_num % (BLOCK_SIZE / 4); // 块内偏移
+
+		// 检查一级索引块是否存在
+		uint32 l1_block = inode_index[INODE_INDEX_1 + l1_idx];
+		if (l1_block == 0) {
+			// 需要分配一级索引块
+			l1_block = bitmap_alloc_block();
+			if (l1_block == (uint32)-1)
+				return -1; // 分配失败
+			inode_index[INODE_INDEX_1 + l1_idx] = l1_block;
+			// 新分配的块需要清零
+			buffer_t *new_buf = buffer_get(l1_block);
+			memset(new_buf->data, 0, BLOCK_SIZE);
+			buffer_write(new_buf);
+			buffer_put(new_buf);
+		}
+
+		// 读取一级索引块
+		buf1 = buffer_get(l1_block);
+		index_table = (uint32 *)buf1->data;
+		block_num = index_table[l1_off];
+		if (block_num == 0) {
+			// 需要分配新的数据块
+			block_num = bitmap_alloc_block();
+			if (block_num == (uint32)-1) {
+				result = -1; // 分配失败
+				buffer_put(buf1);
+				return result;
+			}
+			index_table[l1_off] = block_num;
+			buffer_write(buf1); // 更新索引块
+
+			// 新分配的块需要清零
+			buffer_t *new_buf = buffer_get(block_num);
+			memset(new_buf->data, 0, BLOCK_SIZE);
+			buffer_write(new_buf);
+			buffer_put(new_buf);
+		}
+
+		result = block_num;
+		buffer_put(buf1);
+		return result;
+	}
+
+	logical_block_num -= (INODE_INDEX_2 - INODE_INDEX_1) * (BLOCK_SIZE / 4);
+
+	// 3. 二级间接映射范围 
+	// 只有一个二级索引槽位 inode_index[INODE_INDEX_2]
+	// 它指向一个二级索引块，该块包含 1024 个一级索引块地址
+	if (logical_block_num < 1 * (BLOCK_SIZE / 4) * (BLOCK_SIZE / 4)){
+		uint32 l2_block = inode_index[INODE_INDEX_2];
+		if (l2_block == 0) {
+			// 需要分配二级索引块
+			l2_block = bitmap_alloc_block();
+			if (l2_block == (uint32)-1)
+				return -1; // 分配失败
+			inode_index[INODE_INDEX_2] = l2_block;
+			// 新分配的块需要清零
+			buffer_t *new_buf = buffer_get(l2_block);
+			memset(new_buf->data, 0, BLOCK_SIZE);
+			buffer_write(new_buf);
+			buffer_put(new_buf);
+		}
+
+		uint32 l1_idx = logical_block_num / (BLOCK_SIZE / 4); // 第几个一级索引块
+		uint32 l1_off = logical_block_num % (BLOCK_SIZE / 4); // 块内偏移
+
+		// 读取二级索引块
+		buf2 = buffer_get(l2_block);
+		uint32 *l2_table = (uint32 *)buf2->data;
+		uint32 l1_block = l2_table[l1_idx];
+
+		if (l1_block == 0) {
+			// 需要分配一级索引块
+			l1_block = bitmap_alloc_block();
+			if (l1_block == (uint32)-1) {
+				result = -1; // 分配失败
+				buffer_put(buf2);
+				return result;
+			}
+			l2_table[l1_idx] = l1_block;
+			buffer_write(buf2); // 更新二级索引块
+
+			// 新分配的块需要清零
+			buffer_t *new_buf = buffer_get(l1_block);
+			memset(new_buf->data, 0, BLOCK_SIZE);
+			buffer_write(new_buf);
+			buffer_put(new_buf);
+		}
+
+		// 读取一级索引块
+		buf1 = buffer_get(l1_block);
+		index_table = (uint32 *)buf1->data;
+		block_num = index_table[l1_off];
+
+		if (block_num == 0) {
+			// 需要分配新的数据块
+			block_num = bitmap_alloc_block();
+			if (block_num == (uint32)-1) {
+				result = -1; // 分配失败
+				buffer_put(buf1);
+				buffer_put(buf2);
+				return result;
+			}
+			index_table[l1_off] = block_num;
+			buffer_write(buf1); // 更新一级索引块
+
+			// 新分配的块需要清零
+			buffer_t *new_buf = buffer_get(block_num);
+			memset(new_buf->data, 0, BLOCK_SIZE);
+			buffer_write(new_buf);
+			buffer_put(new_buf);
+		}
+
+		result = block_num;
+		buffer_put(buf1);
+		buffer_put(buf2);
+		return result;
+	}
+
+	// 超出支持的文件大小范围
+	return -1;
 }
 
 /*---------------------关于inode的管理: get dup lock unlock put----------------------*/
