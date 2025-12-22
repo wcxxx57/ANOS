@@ -96,6 +96,8 @@ static uint32 locate_or_add_block(uint32 *inode_index, uint32 logical_block_num)
 	uint32 *index_table;
 	buffer_t *buf1 = NULL, *buf2 = NULL;
     uint32 result = -1;
+	// 每个 block 能存放的索引数量 (1024)
+    uint32 index_per_block = BLOCK_SIZE / sizeof(uint32);
 
 	// 1. 直接映射范围 (0 ~ 9)
     if (logical_block_num < INODE_INDEX_1){
@@ -115,14 +117,13 @@ static uint32 locate_or_add_block(uint32 *inode_index, uint32 logical_block_num)
 		return block_num;
 	}
 
-	logical_block_num -= INODE_INDEX_1;
-
-	// 2. 一级间接映射范围 (10 ~ 10+2048-1)
-	// 每个一级索引块控制 1024 个数据块
-	// INODE_INDEX_2 - INODE_INDEX_1 = 2 个一级索引槽位
-	if (logical_block_num < (INODE_INDEX_2 - INODE_INDEX_1) * (BLOCK_SIZE / 4)){
-		uint32 l1_idx = logical_block_num / (BLOCK_SIZE / 4); // 第几个一级索引块
-		uint32 l1_off = logical_block_num % (BLOCK_SIZE / 4); // 块内偏移
+	// 2. 一级间接映射范围 (10 ~ 10+1024*2-1)
+	// 每个一级索引块控制 1024 个数据块 + 2 个一级索引槽位
+	if (logical_block_num < INODE_BLOCK_INDEX_2){
+		// 计算相对于一级映射起始位置的偏移
+        uint32 rel_idx = logical_block_num - INODE_BLOCK_INDEX_1;
+		uint32 l1_idx = rel_idx / index_per_block; // 第几个一级索引块
+        uint32 l1_off = rel_idx % index_per_block; // 块内偏移
 
 		// 检查一级索引块是否存在
 		uint32 l1_block = inode_index[INODE_INDEX_1 + l1_idx];
@@ -166,12 +167,13 @@ static uint32 locate_or_add_block(uint32 *inode_index, uint32 logical_block_num)
 		return result;
 	}
 
-	logical_block_num -= (INODE_INDEX_2 - INODE_INDEX_1) * (BLOCK_SIZE / 4);
-
-	// 3. 二级间接映射范围 
+	// 3. 二级间接映射范围 (10+2048 ~ 10+2048+1024*1024-1)
 	// 只有一个二级索引槽位 inode_index[INODE_INDEX_2]
 	// 它指向一个二级索引块，该块包含 1024 个一级索引块地址
-	if (logical_block_num < 1 * (BLOCK_SIZE / 4) * (BLOCK_SIZE / 4)){
+	if (logical_block_num < NODE_BLOCK_INDEX_3){
+		// 计算相对于二级映射起始位置的偏移
+        uint32 rel_idx = logical_block_num - INODE_BLOCK_INDEX_2;
+        
 		uint32 l2_block = inode_index[INODE_INDEX_2];
 		if (l2_block == 0) {
 			// 需要分配二级索引块
@@ -186,8 +188,8 @@ static uint32 locate_or_add_block(uint32 *inode_index, uint32 logical_block_num)
 			buffer_put(new_buf);
 		}
 
-		uint32 l1_idx = logical_block_num / (BLOCK_SIZE / 4); // 第几个一级索引块
-		uint32 l1_off = logical_block_num % (BLOCK_SIZE / 4); // 块内偏移
+		uint32 l1_idx = rel_idx / index_per_block; // 第几个一级索引块
+		uint32 l1_off = rel_idx % index_per_block; // 块内偏移
 
 		// 读取二级索引块
 		buf2 = buffer_get(l2_block);
