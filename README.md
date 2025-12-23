@@ -645,3 +645,35 @@ typedef struct dentry {
 最后, 我们还将讨论进程模块与文件系统的关系, 并补全进程模块的最后一块拼图——**proc_exec**
 
 **lab-9 既是文件系统的最终章、也是内核全系统的粘合剂、还是迄今为止最困难的终极考核!**
+
+
+
+修复：
+
+- test-2: 
+修复了助教给的测试用例中的错误
+
+- test-4: 
+修复了path_to_parent_inode在找父节点时没有解锁的问题
+
+核心修复点是：
+
+```c
+if (find_parent_inode && *path == '\0') {
+	inode_unlock(ip); // <--- 加上这一行
+	return ip;
+}
+```
+
+如果不加这一行，fs.c 中的测试用例：
+
+``` c
+ip_5 = path_to_parent_inode(path, name); // 返回了已上锁的 ip_5
+// ...
+inode_lock(ip_5); // <--- 再次加锁，死锁！
+```
+
+因此导致程序卡住！
+
+没有输出 -> 修改了助教给的测试用例中的错误
+
