@@ -232,6 +232,7 @@ static inode_t* __path_to_inode(char *path, char *name, bool find_parent_inode)
 		// 如果需要找父节点，且 path 已经为空（说明 name 是最后一级），则当前 ip 就是父节点
 		if (find_parent_inode && *path == '\0') {
 			// 此时 name 已经被 get_element 填充为最后一级的文件名
+            inode_unlock(ip); // 【修复】 必须解锁！
 			return ip; // 返回父节点
 		}
 
