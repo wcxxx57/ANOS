@@ -367,6 +367,7 @@ void inode_lock(inode_t* ip)
 	sleeplock_acquire(&ip->slk);
 	if (!ip->valid_info) {
 		inode_rw(ip, false);
+		ip->valid_info = true;
 	}
 }
 
