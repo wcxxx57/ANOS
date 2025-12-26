@@ -295,76 +295,186 @@ void fs_init()
 
 	// while(1);
 
-	// 测试4: 文件路径的解析
-	printf("============= test begin =============\n\n");
+// 	// 测试4: 文件路径的解析
+// 	printf("============= test begin =============\n\n");
 
-	inode_t *rooti, *ip_1, *ip_2, *ip_3, *ip_4, *ip_5;
+// 	inode_t *rooti, *ip_1, *ip_2, *ip_3, *ip_4, *ip_5;
 	
-	/* 准备测试环境 */
+// 	/* 准备测试环境 */
 
-	rooti = inode_get(ROOT_INODE);
-	ip_1 = inode_create(INODE_TYPE_DIR, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
-	ip_2 = inode_create(INODE_TYPE_DIR, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
-	ip_3 = inode_create(INODE_TYPE_DATA, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
+// 	rooti = inode_get(ROOT_INODE);
+// 	ip_1 = inode_create(INODE_TYPE_DIR, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
+// 	ip_2 = inode_create(INODE_TYPE_DIR, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
+// 	ip_3 = inode_create(INODE_TYPE_DATA, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
 	
-	inode_lock(rooti);
-	inode_lock(ip_1);
-	inode_lock(ip_2);
-	inode_lock(ip_3);
+// 	inode_lock(rooti);
+// 	inode_lock(ip_1);
+// 	inode_lock(ip_2);
+// 	inode_lock(ip_3);
 
-	if (dentry_create(rooti, ip_1->inode_num, "AABBC") == -1)
-		panic("dentry_create fail 1!");
-	if (dentry_create(ip_1, ip_2->inode_num, "aaabb") == -1)
-		panic("dentry_create fail 2!");
-	if (dentry_create(ip_2, ip_3->inode_num, "file.txt") == -1)
-		panic("dentry_create fail 3!");
+// 	if (dentry_create(rooti, ip_1->inode_num, "AABBC") == -1)
+// 		panic("dentry_create fail 1!");
+// 	if (dentry_create(ip_1, ip_2->inode_num, "aaabb") == -1)
+// 		panic("dentry_create fail 2!");
+// 	if (dentry_create(ip_2, ip_3->inode_num, "file.txt") == -1)
+// 		panic("dentry_create fail 3!");
 
-	char tmp1[] = "This is file context!";
-	char tmp2[32];
-	inode_write_data(ip_3, 0, sizeof(tmp1), tmp1, false);
+// 	char tmp1[] = "This is file context!";
+// 	char tmp2[32];
+// 	inode_write_data(ip_3, 0, sizeof(tmp1), tmp1, false);
 
-	inode_rw(rooti, true);
-	inode_rw(ip_1, true);
-	inode_rw(ip_2, true);
-	// ================== 修改 : 缺少写回元数据 ==================
-	// 没有将 ip_3 的元数据写回磁盘了！
-	inode_rw(ip_3, true);
+// 	inode_rw(rooti, true);
+// 	inode_rw(ip_1, true);
+// 	inode_rw(ip_2, true);
+// 	// ================== 修改 : 缺少写回元数据 ==================
+// 	// 没有将 ip_3 的元数据写回磁盘了！
+// 	inode_rw(ip_3, true);
 
-	inode_unlock(rooti);
-	inode_unlock(ip_1);
-	inode_unlock(ip_2);
-	inode_unlock(ip_3);
-	inode_put(rooti);
-	inode_put(ip_1);
-	inode_put(ip_2);
-	inode_put(ip_3);
+// 	inode_unlock(rooti);
+// 	inode_unlock(ip_1);
+// 	inode_unlock(ip_2);
+// 	inode_unlock(ip_3);
+// 	inode_put(rooti);
+// 	inode_put(ip_1);
+// 	inode_put(ip_2);
+// 	inode_put(ip_3);
 
-	char *path = "///AABBC///aaabb/file.txt";
-	char name[MAXLEN_FILENAME];
+// 	char *path = "///AABBC///aaabb/file.txt";
+// 	char name[MAXLEN_FILENAME];
 
-	ip_4 = path_to_inode(path);
-	if (ip_4 == NULL)
-		panic("invalid ip_4");
+// 	ip_4 = path_to_inode(path);
+// 	if (ip_4 == NULL)
+// 		panic("invalid ip_4");
 
-	ip_5 = path_to_parent_inode(path, name);
-	if (ip_5 == NULL)
-		panic("invalid ip_5");
+// 	ip_5 = path_to_parent_inode(path, name);
+// 	if (ip_5 == NULL)
+// 		panic("invalid ip_5");
 	
-	printf("get a name = %s\n\n", name);
+// 	printf("get a name = %s\n\n", name);
 
-	inode_lock(ip_4);
-	inode_lock(ip_5);
+// 	inode_lock(ip_4);
+// 	inode_lock(ip_5);
 
-	inode_print(ip_4, "file.txt");
-	inode_print(ip_5, "aaabb");
+// 	inode_print(ip_4, "file.txt");
+// 	inode_print(ip_5, "aaabb");
 
-	inode_read_data(ip_4, 0, 32, tmp2, false);
-	printf("read data: %s\n\n", tmp2);
+// 	inode_read_data(ip_4, 0, 32, tmp2, false);
+// 	printf("read data: %s\n\n", tmp2);
 
-	inode_unlock(ip_4);
-	inode_unlock(ip_5);
-	inode_put(ip_4);
-	inode_put(ip_5);
+// 	inode_unlock(ip_4);
+// 	inode_unlock(ip_5);
+// 	inode_put(ip_4);
+// 	inode_put(ip_5);
 
-	printf("============= test end =============\n");
+// 	printf("============= test end =============\n");
+// }
+
+// 测试5: 硬链接(Hard Link)与引用计数测试
+    printf("============= test begin =============\n\n");
+
+    inode_t *rooti_5, *file_orig, *file_link, *check_inode;
+    char content[] = "Shared Content via Hard Link";
+    char read_buf[32];
+
+	printf("before test:");
+	bitmap_print(false);
+    rooti_5 = inode_get(ROOT_INODE);
+    
+    // 1. 创建原始文件 "original.txt"
+    inode_lock(rooti_5);
+    file_orig = inode_create(INODE_TYPE_DATA, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
+	printf("creating 'original.txt'...\n");
+    dentry_create(rooti_5, file_orig->inode_num, "original.txt");
+    bitmap_print(false);
+
+    // 写入数据
+    inode_lock(file_orig);
+    inode_write_data(file_orig, 0, sizeof(content), content, false);
+    printf("Created 'original.txt' with inode %d, nlink = %d\n", file_orig->inode_num, file_orig->disk_info.nlink);
+    inode_unlock(file_orig);
+    inode_unlock(rooti_5);
+
+    // 2. 创建硬链接 "linked.txt" 指向同一个 inode
+    inode_lock(rooti_5);
+    // 增加 inode 的链接数
+    inode_lock(file_orig);
+    file_orig->disk_info.nlink++;
+    inode_rw(file_orig, true); // 写回磁盘更新 nlink
+    inode_unlock(file_orig);
+
+    // 在目录中创建新条目指向原 inode 号
+    dentry_create(rooti_5, file_orig->inode_num, "linked.txt");
+    printf("Created hard link 'linked.txt' pointing to inode %d\n", file_orig->inode_num);
+    inode_unlock(rooti_5);
+
+    // 3. 通过新路径读取数据验证
+    file_link = path_to_inode("/linked.txt");
+    assert(file_link != NULL, "link lookup failed");
+    assert(file_link->inode_num == file_orig->inode_num, "inode mismatch");
+    
+    inode_lock(file_link);
+    printf("Inode %d nlink is now: %d\n", file_link->inode_num, file_link->disk_info.nlink);
+    assert(file_link->disk_info.nlink == 2, "nlink should be 2");
+    
+    inode_read_data(file_link, 0, sizeof(content), read_buf, false);
+    printf("Read from 'linked.txt': %s\n", read_buf);
+    inode_unlock(file_link);
+
+    // 4. 删除原始路径 "original.txt"
+    inode_lock(rooti_5);
+    dentry_delete(rooti_5, "original.txt");
+    
+    // 减少 nlink
+    inode_lock(file_orig);
+    file_orig->disk_info.nlink--;
+    inode_rw(file_orig, true);
+    printf("Deleted 'original.txt', inode %d nlink is now: %d\n", file_orig->inode_num, file_orig->disk_info.nlink);
+    inode_unlock(file_orig);
+    inode_unlock(rooti_5);
+
+    // 5. 验证文件仍然可以通过 "linked.txt" 访问
+    check_inode = path_to_inode("/linked.txt");
+    assert(check_inode != NULL, "file should still exist");
+    
+    inode_lock(check_inode);
+    memset(read_buf, 0, sizeof(read_buf));
+    inode_read_data(check_inode, 0, sizeof(content), read_buf, false);
+    printf("Read from 'linked.txt' after original deleted: %s\n", read_buf);
+    inode_unlock(check_inode);
+
+    // 6. 删除最后一个链接 "linked.txt" 并验证回收
+    printf("\nDeleting last link 'linked.txt'...\n");
+    
+    inode_lock(rooti_5);
+    dentry_delete(rooti_5, "linked.txt"); // 删除目录项
+    
+    // 获取 check_inode 的锁 (check_inode 指向 linked.txt 对应的 inode)
+    inode_lock(check_inode); 
+    check_inode->disk_info.nlink--; // nlink 1 -> 0
+    inode_rw(check_inode, true);    // 写回磁盘，持久化 nlink=0
+    
+    printf("Deleted 'linked.txt', inode %d nlink is now: %d\n", check_inode->inode_num, check_inode->disk_info.nlink);
+    inode_unlock(check_inode);
+    inode_unlock(rooti_5);
+
+    // 应触发物理回收
+    inode_put(file_orig); 
+    inode_put(file_link);
+    
+    // 此时 check_inode 的 ref 应该是 1 (因为上面 path_to_inode 获取了一次)
+    // 这次 put 应该触发真正的回收 (free_data_blocks + bitmap_free_inode)
+    printf("Triggering final inode_put (should recycle resources)...\n");
+    inode_put(check_inode); 
+
+    // 7. [验证] 验证文件彻底消失
+    inode_t *gone_inode = path_to_inode("/linked.txt");
+    assert(gone_inode == NULL, "File should be gone");
+    
+    // 打印位图确认 inode 3 对应的位变回了 0
+    bitmap_print(false); 
+
+    // 注意：check_inode 等指针已经被 put 了，清理阶段不需要再 put
+    inode_put(rooti_5);
+    
+    printf("============= test end =============\n");
 }

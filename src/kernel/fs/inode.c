@@ -265,16 +265,19 @@ void inode_rw(inode_t *ip, bool write)
 {
 	assert(sleeplock_holding(&ip->slk), "inode_rw: need slk");
 	assert(ip->inode_num != INVALID_INODE_NUM, "inode_rw: invalid inode_num");
+
 	uint32 inodes_per_block = BLOCK_SIZE / sizeof(inode_disk_t);
 	uint32 blk = sb.inode_firstblock + ip->inode_num / inodes_per_block;
-	uint32 off = ip->inode_num % inodes_per_block;
+	uint32 inode_offset = ip->inode_num % inodes_per_block;
+
 	buffer_t *buf = buffer_get(blk);
-	inode_disk_t *table = (inode_disk_t*)buf->data;
-	if (write) {
-		memmove(&table[off], &ip->disk_info, sizeof(inode_disk_t));
+	inode_disk_t *inodes_table = (inode_disk_t*)buf->data;
+
+	if (write) { // 写回磁盘
+		memmove(&inodes_table[inode_offset], &ip->disk_info, sizeof(inode_disk_t));
 		buffer_write(buf);
-	} else {
-		memmove(&ip->disk_info, &table[off], sizeof(inode_disk_t));
+	} else { // 从磁盘读取
+		memmove(&ip->disk_info, &inodes_table[inode_offset], sizeof(inode_disk_t));
 		ip->valid_info = true;
 	}
 	buffer_put(buf);
@@ -289,7 +292,7 @@ void inode_rw(inode_t *ip, bool write)
 inode_t *inode_get(uint32 inode_num)
 {
 	spinlock_acquire(&lk_inode_cache);
-	inode_t *empty = NULL;
+	inode_t *free_inode = NULL;
 	for (int i = 0; i < (int)N_INODE; i++) {
 		inode_t *ip = &inode_cache[i];
 		if (ip->ref > 0 && ip->inode_num == inode_num) {
@@ -297,21 +300,22 @@ inode_t *inode_get(uint32 inode_num)
 			spinlock_release(&lk_inode_cache);
 			return ip;
 		}
-		if (empty == NULL && ip->ref == 0)
-			empty = ip;
+		if (free_inode == NULL && ip->ref == 0)
+			free_inode = ip; // 先标记一下空闲块
 	}
-	if (empty == NULL)
+	/* cache未命中，分配新inode */
+	if (free_inode == NULL)
 		panic("inode_get: no free inode");
-	/* 初始化空闲inode为目标 */
-	empty->ref = 1;
-	empty->inode_num = inode_num;
-	empty->valid_info = false;
-	/* 读取磁盘副本到内存 */
-	sleeplock_acquire(&empty->slk);
-	inode_rw(empty, false);
-	sleeplock_release(&empty->slk);
+	/* 初始化新inode */
+	free_inode->ref = 1;
+	free_inode->inode_num = inode_num;
+	free_inode->valid_info = false;
 	spinlock_release(&lk_inode_cache);
-	return empty;
+	/* 读磁盘 */
+	sleeplock_acquire(&free_inode->slk);
+	inode_rw(free_inode, false);
+	sleeplock_release(&free_inode->slk);
+	return free_inode;
 }
 
 /*
@@ -427,15 +431,13 @@ void inode_delete(inode_t *ip)
 */
 uint32 inode_read_data(inode_t *ip, uint32 offset, uint32 len, void *dst, bool is_user_dst)
 {
-	/* 边界与类型检查 */
-	if (ip->disk_info.type == INODE_TYPE_DIR) {
-		/* 目录接受空洞，但本函数用于通用读取，允许读取 index[0] */
-	}
+	/* 边界检查 */
 	uint32 fsize = ip->disk_info.size;
 	if (offset >= fsize)
 		return 0;
 	if (offset + len > fsize)
 		len = fsize - offset;
+	/* 数据读取 */
 	uint32 done = 0;
 	while (done < len) {
 		uint32 off = offset + done;
@@ -443,7 +445,7 @@ uint32 inode_read_data(inode_t *ip, uint32 offset, uint32 len, void *dst, bool i
 		uint32 boff = off % BLOCK_SIZE;          // 块内偏移
 		uint32 take = BLOCK_SIZE - boff;
 		if (take > (len - done)) take = len - done;
-		/* 找到物理块（必须已存在） */
+		/* 找到物理块 */
 		uint32 pbn = locate_or_add_block(ip->disk_info.index, lbn);
 		if (pbn == (uint32)-1) break;
 		buffer_t *buf = buffer_get(pbn);
@@ -472,7 +474,6 @@ uint32 inode_write_data(inode_t *ip, uint32 offset, uint32 len, void *src, bool 
 		uint32 boff = off % BLOCK_SIZE;
 		uint32 take = BLOCK_SIZE - boff;
 		if (take > (len - done)) take = len - done;
-		/* 需要按需扩展：locate_or_add_block会分配缺失块并清零 */
 		uint32 pbn = locate_or_add_block(ip->disk_info.index, lbn);
 		if (pbn == (uint32)-1) break;
 		buffer_t *buf = buffer_get(pbn);
@@ -484,7 +485,7 @@ uint32 inode_write_data(inode_t *ip, uint32 offset, uint32 len, void *src, bool 
 		buffer_put(buf);
 		done += take;
 	}
-	/* 更新文件大小：DATA类型代表[0,size)已用，无空洞 */
+	/* 更新文件大小 */
 	uint32 newsize = offset + done;
 	if (newsize > ip->disk_info.size)
 		ip->disk_info.size = newsize;
