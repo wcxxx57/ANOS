@@ -63,20 +63,12 @@ int uart_getc_sync(void)
 // 中断处理(键盘输入->屏幕输出)
 void uart_intr(void)
 {
-    // 某些平台/模拟器下 IIR 可能显示无挂起，但 LSR 上仍有可读数据。
-    // 因此以 LSR 的 RX_READY 为准，循环读取所有可用字符并处理回显。
-    while (ReadReg(LSR) & LSR_RX_READY) {
-        int c = ReadReg(RHR);
+    while (1)
+	{
+		int c = uart_getc_sync();
+		if (c == -1)
+		break;
 
-        if (c == '\r' || c == '\n') { // 处理换行
-            uart_putc_sync('\r');
-            uart_putc_sync('\n');
-        } else if (c == '\b' || c == 127) { // 处理backspace
-            uart_putc_sync('\b');
-            uart_putc_sync(' ');
-            uart_putc_sync('\b');
-        } else {
-            uart_putc_sync(c);
-        }
-    }
+		cons_edit(c);
+	}
 }

@@ -11,8 +11,8 @@
 #define RHR 0 // receive holding register (for input bytes)
 #define THR 0 // transmit holding register (for output bytes)
 #define IER 1 // interrupt enable register
-#define IER_RX_ENABLE (1 << 0) // Received Data Available Interrupt Enable
-#define IER_TX_ENABLE (1 << 1) // THR Empty Interrupt Enable
+#define IER_TX_ENABLE (1 << 0)
+#define IER_RX_ENABLE (1 << 1)
 #define FCR 2 // FIFO control register
 #define FCR_FIFO_ENABLE (1 << 0)
 #define FCR_FIFO_CLEAR (3 << 1) // clear the content of the two FIFOs
@@ -39,6 +39,7 @@
 #define ALIGN_UP(addr, refer) (((addr) + (refer) - 1) & ~((refer) - 1)) // 向上对齐
 #define ALIGN_DOWN(addr, refer) ((addr) & ~((refer) - 1))               // 向下对齐
 
+// CPU
 typedef struct cpu
 {
     int noff;       // 关中断的深度
@@ -46,3 +47,16 @@ typedef struct cpu
     proc_t *proc;   // cpu上运行的进程
     context_t ctx;  // 内核自身上下文
 } cpu_t;
+
+
+#define CONSOLE_INPUT_BUF 128
+
+// console
+typedef struct console
+{
+    spinlock_t lk;
+    char buf[CONSOLE_INPUT_BUF];
+    int read_idx;
+    int writ_idx;
+    int edit_idx;
+} console_t;

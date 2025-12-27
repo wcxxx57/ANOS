@@ -123,8 +123,6 @@ void proc_free(proc_t *p)
     p->state = UNUSED;
 }
 
-
-
 /* 
     获得一个初始化过的用户页表
     完成trapframe和trampoline的映射

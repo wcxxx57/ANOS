@@ -313,31 +313,35 @@ void uvm_munmap(uint64 begin, uint32 npages)
 /*------------------part-3: 用户空间heap和stack管理相关------------------*/
 
 // 用户堆空间增加, 返回新的堆顶地址 (注意栈顶最大值限制)
-uint64 uvm_heap_grow(pgtbl_t pgtbl, uint64 cur_heap_top, uint32 len) 
+uint64 uvm_heap_grow(pgtbl_t pgtbl, uint64 cur_heap_top, uint32 len, int flag) 
 {
-    if (len == 0) return cur_heap_top;
 
-    uint64 new_top = cur_heap_top + (uint64)len;
-    // 计算页数，向上取整
-    uint64 cur_pages = (cur_heap_top + PGSIZE - 1) / PGSIZE;
-    uint64 new_pages = (new_top + PGSIZE - 1) / PGSIZE;
-
-    // 边界检查：不要越过 mmap 区域开始
-    if (new_pages * PGSIZE > (uint64)MMAP_BEGIN) {
-        return (uint64)-1;
-    }
-
-    // 为每一页分配物理页并映射
-    for (uint64 p = cur_pages ; p < new_pages; p++) {
-        uint64 va = p * PGSIZE;
-        void *pa = pmem_alloc(false);
-        if (!pa) return (uint64)-1;
-        memset(pa, 0, PGSIZE);
-        vm_mappages(pgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W | PTE_U);
-    }
-
-    return new_top; 
 }
+// uint64 uvm_heap_grow(pgtbl_t pgtbl, uint64 cur_heap_top, uint32 len) 
+// {
+//     if (len == 0) return cur_heap_top;
+
+//     uint64 new_top = cur_heap_top + (uint64)len;
+//     // 计算页数，向上取整
+//     uint64 cur_pages = (cur_heap_top + PGSIZE - 1) / PGSIZE;
+//     uint64 new_pages = (new_top + PGSIZE - 1) / PGSIZE;
+
+//     // 边界检查：不要越过 mmap 区域开始
+//     if (new_pages * PGSIZE > (uint64)MMAP_BEGIN) {
+//         return (uint64)-1;
+//     }
+
+//     // 为每一页分配物理页并映射
+//     for (uint64 p = cur_pages ; p < new_pages; p++) {
+//         uint64 va = p * PGSIZE;
+//         void *pa = pmem_alloc(false);
+//         if (!pa) return (uint64)-1;
+//         memset(pa, 0, PGSIZE);
+//         vm_mappages(pgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W | PTE_U);
+//     }
+
+//     return new_top; 
+// }
 
 // 用户堆空间减少, 返回新的堆顶地址
 uint64 uvm_heap_ungrow(pgtbl_t pgtbl, uint64 cur_heap_top, uint32 len)

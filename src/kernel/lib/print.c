@@ -15,6 +15,7 @@ static spinlock_t print_lk;//全局锁
 void print_init(void)
 {
     uart_init();
+    cons_init();
     spinlock_init(&print_lk, "printf");
 }
 

@@ -114,38 +114,6 @@ uint64 sys_munmap()
 }
 
 /*
-    打印一个字符串
-    char *str
-    成功返回0
-*/
-uint64 sys_print_str()
-{
-    uint64 addr;
-    arg_uint64(0, &addr); // 获取字符串地址
-
-    char buf[256];
-    // 从用户空间拷贝字符串到内核空间
-    uvm_copyin_str(myproc()->pgtbl, (uint64)buf, addr, 256);
-
-    printf("%s", buf);
-
-    return 0;
-}
-
-/*
-    打印一个32位整数
-    int num
-    成功返回0
-*/
-uint64 sys_print_int()
-{
-    int num;
-    arg_uint32(0, (uint32 *)&num); // 获取整数参数
-    printf("%d", num);
-    return 0;
-}
-
-/*
     进程复制
     返回子进程的pid
 */
@@ -199,129 +167,168 @@ uint64 sys_getpid()
     return (uint64)(myproc()->pid);
 }
 
-
-/*---------------- buffer 相关 syscalls ----------------*/
-
-// 获取一个描述指定块的buffer，返回buffer的内核地址（用于后续读写）
-uint64 sys_get_block()
+/*
+    执行ELF文件以替换当前进程的内容
+    char *path
+    char **argv
+    成功返回argc, 失败返回-1
+*/
+uint64 sys_exec()
 {
-    uint32 block_num;
-    arg_uint32(0, &block_num);
-    buffer_t *b = buffer_get(block_num);
-    return (uint64)b;
+
 }
 
-// 将buf->data拷贝到用户空间地址
-uint64 sys_read_block()
+/* 构建fd->file的映射, 返回fd */
+static uint32 alloc_fd(file_t *file)
 {
-    uint64 buf_addr, user_addr;
-    arg_uint64(0, &buf_addr);
-    arg_uint64(1, &user_addr);
-
-    buffer_t *b = (buffer_t *)buf_addr;
-    // 读取时如果调用者尚未读磁盘，可再保证一次（持锁即一致）
-    if (!sleeplock_holding(&b->slk))
-        sleeplock_acquire(&b->slk);
-    // 将缓冲区数据拷贝到用户空间
-    uvm_copyout(myproc()->pgtbl, user_addr, (uint64)b->data, BLOCK_SIZE);
-    sleeplock_release(&b->slk);
-    return 0;
-}
-
-// 将用户空间数据写入到buf->data并写回磁盘
-uint64 sys_write_block()
-{
-    uint64 buf_addr, user_addr;
-    arg_uint64(0, &buf_addr);
-    arg_uint64(1, &user_addr);
-
-    buffer_t *b = (buffer_t *)buf_addr;
-    if (!sleeplock_holding(&b->slk))
-        sleeplock_acquire(&b->slk);
-    // 先把用户数据拷入缓冲区
-    uvm_copyin(myproc()->pgtbl, (uint64)b->data, user_addr, BLOCK_SIZE);
-    // 再写入磁盘
-    buffer_write(b);
-    sleeplock_release(&b->slk);
-    return 0;
-}
-
-// 释放一个buffer（引用计数-1，可能移入不活跃队列）
-uint64 sys_put_block()
-{
-    uint64 buf_addr;
-    arg_uint64(0, &buf_addr);
-    buffer_t *b = (buffer_t *)buf_addr;
-    buffer_put(b);
-    return 0;
-}
-
-// 打印buffer链表状态（仅测试）
-uint64 sys_show_buffer()
-{
-    buffer_print_info();
-    return 0;
-}
-
-// 释放非活跃链表中的物理页缓存
-uint64 sys_flush_buffer()
-{
-    uint32 n;
-    arg_uint32(0, &n);
-    return (uint64)buffer_freemem(n);
+    proc_t *p = myproc();
+    for (uint32 i = 0; i < N_OPEN_FILE_PER_PROC; i++)
+    {
+        if (p->open_file[i] == NULL) {
+            p->open_file[i] = file;
+            return i;
+        }
+    }
+    return -1;
 }
 
 /*
-    从data_bitmap申请1个block
-    返回 block_num
+    打开或创建文件
+    char *path
+    uint32 open_mode
+    成功返回fd, 失败返回-1
 */
-uint64 sys_alloc_block()
+uint64 sys_open()
 {
-    return (uint64)bitmap_alloc_block();
+
 }
 
 /*
-    向data_bitmap释放1个block
-    参数: block_num
+    关闭文件
+    uint32 fd
+    成功返回0, 失败返回-1
 */
-uint64 sys_free_block()
+uint64 sys_close()
 {
-    uint32 block_num;
-    arg_uint32(0, &block_num);
-    bitmap_free_block(block_num);
-    return 0;
+
 }
 
 /*
-    从inode_bitmap申请1个inode
-    返回 inode_num
+    读取文件内容
+    uint32 fd
+    uint32 len
+    uint64 addr
+    成功返回读到的字节数, 失败返回0
 */
-uint64 sys_alloc_inode()
+uint64 sys_read()
 {
-    return (uint64)bitmap_alloc_inode();
+
 }
 
 /*
-    向inode_bitmap释放1个inode
-    参数: inode_num
+    写入文件内容
+    uint32 fd
+    uint32 len
+    uint64 addr
+    成功返回写入的字节数, 失败返回0
 */
-uint64 sys_free_inode()
+uint64 sys_write()
 {
-    uint32 inode_num;
-    arg_uint32(0, &inode_num);
-    bitmap_free_inode(inode_num);
-    return 0;
+
 }
 
 /*
-    输出目标bitmap的状态
-    参数: bitmap_type (0: data_bitmap, 1: inode_bitmap)
+    调整读写指针位置
+    uint32 fd
+    uint32 offset
+    uint32 flag
+    成功返回新的偏移量, 失败返回-1
 */
-uint64 sys_show_bitmap()
+uint64 sys_lseek()
 {
-    uint32 bitmap_type;
-    arg_uint32(0, &bitmap_type);
-    // type == 0 打印 data bitmap, type == 1 打印 inode bitmap
-    bitmap_print(bitmap_type == 0);
-    return 0;
+
+}
+
+/*
+    复制文件控制权
+    uinr32 fd
+    成功返回new_fd, 失败返回-1
+*/
+uint64 sys_dup()
+{
+
+}
+
+/*
+    获取文件信息
+    uint32 fd
+    uint64 addr
+    成功返回0, 失败返回-1
+*/
+uint64 sys_fstat()
+{
+
+}
+
+/*
+    获取目录中的所有目录项信息
+    uint32 fd
+    uint64 addr
+    uint32 buffer_len
+    成功返回读到的字节数, 失败返回-1
+*/
+uint64 sys_get_dentries()
+{
+
+}
+
+/*
+    创建目录
+    char *path
+    成功返回0, 失败返回-1
+*/
+uint64 sys_mkdir()
+{
+
+}
+
+/*
+    修改当前工作目录
+    char *new_path
+    成功返回0, 失败返回-1
+*/
+uint64 sys_chdir()
+{
+
+}
+
+/*
+    打印当前工作目录的绝对路径
+    成功返回0, 失败返回-1
+*/
+uint64 sys_print_cwd()
+{
+
+}
+
+/*
+    新建链接
+    char *old_path
+    char *new_path
+    成功返回0, 失败返回-1
+*/
+uint64 sys_link()
+{
+
+}
+
+
+/*
+    删除链接 (可能触发删除文件)
+    char *path
+    成功返回0, 失败返回-1
+*/
+uint64 sys_unlink()
+{
+
 }
