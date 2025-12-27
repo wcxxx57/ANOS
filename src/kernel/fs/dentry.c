@@ -55,7 +55,32 @@ uint32 dentry_search(inode_t *ip, char *name)
 */
 uint32 dentry_search_2(inode_t *ip, uint32 inode_num, char *name)
 {
+	assert(sleeplock_holding(&ip->slk), "dentry_search_2: slk!");
+	assert(ip->disk_info.type == INODE_TYPE_DIR, "dentry_search_2: not dir!");
 
+	uint32 block_num = ip->disk_info.index[0];
+	if (block_num == 0)
+		return (uint32)-1;
+
+	buffer_t *buf = buffer_get(block_num);
+	dentry_t *de = (dentry_t *)buf->data;
+
+	// 遍历 block 中的所有 dentry 槽位
+	for (int i = 0; i < DENTRY_PER_BLOCK; i++) {
+		// 检查当前槽位是否有效且 inode_num 匹配
+		if (de[i].name[0] != 0 && de[i].inode_num == inode_num) {
+			// 找到匹配的目录项，拷贝名称
+			memmove(name, de[i].name, MAXLEN_FILENAME);
+			name[MAXLEN_FILENAME - 1] = 0; // 确保以 '\0' 结尾
+
+			uint32 name_len = (uint32)strlen(name);
+			buffer_put(buf);
+			return name_len; // 返回名称长度
+		}
+	}
+
+	buffer_put(buf);
+	return (uint32)-1; // 未找到匹配的目录项
 }
 
 /*
@@ -82,11 +107,13 @@ uint32 dentry_create(inode_t *ip, uint32 inode_num, char *name)
 			return -1; // 分配 block 失败
 		}
 		ip->disk_info.index[0] = block_num;
+
 		// 新分配的块需要清零，保证 dentry.name[0] == 0
 		buffer_t *buf = buffer_get(block_num);
         memset(buf->data, 0, BLOCK_SIZE);
         buffer_write(buf);
         buffer_put(buf);
+
 		// 目录大小更新为 BLOCK_SIZE（一个块）
 		ip->disk_info.size = BLOCK_SIZE;
         inode_rw(ip, true); // 写回 inode 元数据
@@ -162,7 +189,38 @@ uint32 dentry_delete(inode_t *ip, char *name)
 */
 uint32 dentry_transmit(inode_t *ip, uint64 dst, uint32 len, bool is_user_dst)
 {
+	assert(sleeplock_holding(&ip->slk), "dentry_transmit: slk!");
+    assert(ip->disk_info.type == INODE_TYPE_DIR, "dentry_transmit: not dir!");
 
+	if (len < sizeof(dentry_t))
+		return 0; // 缓冲区太小
+
+	uint32 block_num = ip->disk_info.index[0];
+	if (block_num == 0)
+		return 0; 
+	buffer_t *buf = buffer_get(block_num);
+	dentry_t *de = (dentry_t *)buf->data;
+
+	uint32 copied = 0;
+	// 遍历 block 中的所有 dentry 槽位
+	for (int i = 0; i < DENTRY_PER_BLOCK; i++) {
+		// 检查当前槽位是否有效
+		if (de[i].name[0] != 0) {
+			// 检查是否还有足够空间拷贝一个 dentry
+			if (copied + sizeof(dentry_t) > len) 
+				break; // 缓冲区空间不足
+
+			if (is_user_dst) { // 传输到用户空间
+				uvm_copyout(myproc()->pgtbl, dst + copied, (uint64)&de[i], sizeof(dentry_t));
+			} else { // 传输到内核空间
+				memmove((void *)(dst + copied), (void *)&de[i], sizeof(dentry_t));
+			}
+			copied += sizeof(dentry_t);
+		}
+	}
+
+	buffer_put(buf);
+	return copied; // 返回成功填充的数据量(字节)
 }
 
 
@@ -245,9 +303,21 @@ static inode_t* __path_to_inode(char *path, char *name, bool find_parent_inode)
 {
 	inode_t *ip, *next_ip;
 
-	// 1. 从根目录开始（目前只支持绝对路径）
-	ip = inode_get(ROOT_INODE);
-	inode_lock(ip);
+	if (path == NULL) 
+		return NULL;
+
+	// 1. 决定起始目录 （支持绝对路径和相对路径）
+	if (path[0] == '/'){
+		ip = inode_get(ROOT_INODE); // 从根目录开始
+	} else {
+		proc_t *p = myproc();
+		if (p != NULL && p->cwd != NULL)
+			ip = inode_dup(p->cwd); // 从当前工作目录开始
+		else 
+			ip = inode_get(ROOT_INODE); // 退回根目录
+	}
+
+	inode_lock(ip); 
 
 	// 2. 循环解析路径分量
 	while ((path = get_element(path, name)) != NULL) {
@@ -322,7 +392,79 @@ inode_t* path_to_parent_inode(char *path, char *name)
 */
 uint32 inode_to_path(inode_t *ip, char *path, uint32 len)
 {
+	// 至少需要放一个 '/' 和 '\0'
+	if (ip == NULL || path == NULL || len < 2) // 空间不足
+		return (uint32)-1;
 
+	inode_lock(ip);
+	// 输入 inode 需要是目录
+	if (ip->disk_info.type != INODE_TYPE_DIR) {
+		inode_unlock(ip);
+		return (uint32)-1;
+	}
+	inode_unlock(ip);
+
+	// 末尾放 '\0'
+	uint32 off = len;
+	path[len - 1] = '\0';
+
+	inode_t *cur = inode_dup(ip); 
+
+	while (1){
+		// 回溯终止条件：到根目录，直接放一个 '/'
+		if (cur->inode_num == ROOT_INODE){
+			if (off < 2) {
+				// 空间不足
+				inode_put(cur);
+				return (uint32)-1;
+			}
+			path[--off] = '/';
+			inode_put(cur);
+			return off;
+		}
+
+		// 1. 找父 inode：通过 cur 目录中的 ".."
+		inode_lock(cur);
+		uint32 parent_num = dentry_search(cur, "..");
+		inode_unlock(cur);
+
+		if (parent_num == INVALID_INODE_NUM) {
+			// 找不到父目录，失败
+			inode_put(cur);
+			return (uint32)-1;
+		}
+
+		inode_t *parent = inode_get(parent_num);
+
+		// 2. 在父目录中反查 cur 的名字：利用 dentry_search_2
+		char name[MAXLEN_FILENAME];
+		inode_lock(parent);
+		uint32 name_len = dentry_search_2(parent, cur->inode_num, name);
+		inode_unlock(parent);
+
+		if (name_len == (uint32)-1 || name_len == 0) {
+			// 反查失败
+			inode_put(parent);
+			inode_put(cur);
+			return (uint32)-1;
+		}
+
+		// 3. 预留 "/" + name 的空间
+		if (off < name_len + 1) {
+			// 空间不足
+			inode_put(parent);
+			inode_put(cur);
+			return (uint32)-1;
+		}
+
+		off -= name_len;
+		memmove(path + off, name, name_len);
+		path[--off] = '/';
+
+		// 4. 继续向上回溯，直到根目录
+		inode_put(cur);
+		cur = parent;
+	}
 }
 
 /*
@@ -331,7 +473,83 @@ uint32 inode_to_path(inode_t *ip, char *path, uint32 len)
 */
 inode_t* path_create_inode(char *path, uint16 type, uint16 major, uint16 minor)
 {
+	if (path == NULL)
+		return NULL;
 
+	char name[MAXLEN_FILENAME];
+	// 父目录 inode
+	inode_t *parent = path_to_parent_inode(path, name);
+	if (parent == NULL) {
+		return NULL; 
+	}
+
+	inode_lock(parent);
+
+	// 父目录必须是目录类型
+	if (parent->disk_info.type != INODE_TYPE_DIR) {
+		inode_unlock(parent);
+		inode_put(parent);
+		return NULL;
+	}
+
+	// 检查重名
+	if (dentry_search(parent, name) != INVALID_INODE_NUM) {
+		inode_unlock(parent);
+		inode_put(parent);
+		return NULL; // 重名，创建失败
+	}
+
+	// 创建新的 inode
+	inode_t *ip = inode_create(type, major, minor);
+	if (ip == NULL) {
+		inode_unlock(parent);
+		inode_put(parent);
+		return NULL; // 创建 inode 失败
+	}
+
+	// 若创建目录：初始化 "." 和 ".."
+	if (type == INODE_TYPE_DIR) {
+        inode_lock(ip);
+		if (dentry_create(ip, ip->inode_num, ".") == (uint32)-1) {
+			// 创建 "." 失败 -- 回滚
+			// 标记 nlink=0，使 inode_put 后可回收
+			ip->disk_info.nlink = 0;
+			inode_rw(ip, true); // 写回 inode 元数据
+			inode_unlock(ip);
+			inode_unlock(parent);
+			inode_put(parent);
+            inode_put(ip);
+            return NULL;
+		}
+		if (dentry_create(ip, parent->inode_num, "..") == (uint32)-1) {
+			// 创建 ".." 失败 -- 回滚
+			ip->disk_info.nlink = 0;
+			inode_rw(ip, true);
+            inode_unlock(ip);
+			inode_unlock(parent);
+			inode_put(parent);
+			inode_put(ip);
+			return NULL;
+		}
+		inode_unlock(ip);
+	}
+
+	// 在父目录中创建新的 dentry: name -> ip->inode_num
+	if (dentry_create(parent, ip->inode_num, name) == (uint32)-1) {
+		// 创建 dentry 失败 -- 回滚
+		inode_lock(ip);
+		ip->disk_info.nlink = 0;
+        inode_rw(ip, true);
+        inode_unlock(ip);
+		inode_unlock(parent);
+        inode_put(parent);
+        inode_put(ip);
+        return NULL;
+	}
+
+	inode_unlock(parent);
+	inode_put(parent);
+	return ip; // 成功返回新创建的 inode
 }
 
 /*
@@ -342,7 +560,66 @@ inode_t* path_create_inode(char *path, uint16 type, uint16 major, uint16 minor)
 */
 uint32 path_link(char *old_path, char *new_path)
 {
+	if (old_path == NULL || new_path == NULL)
+        return (uint32)-1;
+	
+	inode_t *old_ip = path_to_inode(old_path);
+	if (old_ip == NULL)
+		return (uint32)-1;
 
+	// 禁止链接目录
+	inode_lock(old_ip);
+    if (old_ip->disk_info.type == INODE_TYPE_DIR) {
+        inode_unlock(old_ip);
+        inode_put(old_ip);
+        return (uint32)-1;
+    }
+    inode_unlock(old_ip);
+
+	// 获取 new_path 的父目录
+	char name[MAXLEN_FILENAME];
+    inode_t *parent = path_to_parent_inode(new_path, name);
+	if (parent == NULL) {
+		inode_put(old_ip);
+		return (uint32)-1;
+	}
+
+	inode_lock(parent);
+
+	// 父目录必须是目录类型
+	if (parent->disk_info.type != INODE_TYPE_DIR) {
+		inode_unlock(parent);
+		inode_put(parent);
+        inode_put(old_ip);
+        return (uint32)-1;
+	}
+
+	// 检查重名: new_path 已存在则失败
+	if (dentry_search(parent, name) != INVALID_INODE_NUM) {
+		inode_unlock(parent);
+		inode_put(parent);
+		inode_put(old_ip);
+		return (uint32)-1;
+	}
+
+	// 先创建新的 dentry
+	if (dentry_create(parent, old_ip->inode_num, name) == (uint32)-1) {
+		// 创建 dentry 失败
+		inode_unlock(parent);
+		inode_put(parent);
+		inode_put(old_ip);
+		return (uint32)-1;
+	}
+
+	// 再增加 nlink （持 inode 锁写回磁盘）
+	inode_lock(old_ip);
+	old_ip->disk_info.nlink++;
+	inode_rw(old_ip, true);
+	inode_unlock(old_ip);
+	inode_unlock(parent);
+	inode_put(parent);
+	inode_put(old_ip);
+	return 0; 
 }
 
 /*
@@ -351,5 +628,67 @@ uint32 path_link(char *old_path, char *new_path)
 */
 uint32 path_unlink(char *path)
 {
+	if (path == NULL)
+        return (uint32)-1;
 
+	char name[MAXLEN_FILENAME];
+	inode_t *parent = path_to_parent_inode(path, name);
+	if (parent == NULL)
+        return (uint32)-1;
+
+	// 禁止删除 "." 和 ".."
+	if (strncmp(name, ".", MAXLEN_FILENAME) == 0 || strncmp(name, "..", MAXLEN_FILENAME) == 0) {
+		inode_put(parent);
+		return (uint32)-1;
+	}
+
+	inode_lock(parent);
+	// 父目录必须是目录类型
+	if (parent->disk_info.type != INODE_TYPE_DIR) {
+		inode_unlock(parent);
+		inode_put(parent);
+		return (uint32)-1;
+	}
+
+	// 先定位目标 inode
+	uint32 inode_num = dentry_search(parent, name);
+	if (inode_num == INVALID_INODE_NUM) {
+		// 目录项不存在
+		inode_unlock(parent);
+		inode_put(parent);
+		return (uint32)-1;
+	}
+
+	inode_t *ip = inode_get(inode_num);
+    inode_lock(ip);
+
+	// 不允许做目录的 unlink
+	if (ip->disk_info.type == INODE_TYPE_DIR) {
+		inode_unlock(ip);
+		inode_put(ip);
+        inode_unlock(parent);
+        inode_put(parent);
+		return (uint32)-1;
+	}
+
+	// 再从父目录中删除 dentry
+	if (dentry_delete(parent, name) == INVALID_INODE_NUM) {
+		// 删除失败
+		inode_unlock(ip);
+		inode_put(ip);
+		inode_unlock(parent);
+		inode_put(parent);
+		return (uint32)-1;
+	}
+
+	// 最后 nlink-- （持 inode 锁写回磁盘）
+	if (ip->disk_info.nlink > 0) {
+		ip->disk_info.nlink--;
+	}
+	inode_rw(ip, true);
+	inode_unlock(ip);
+	inode_put(ip);
+	inode_unlock(parent);
+	inode_put(parent); // 如果 nlink 变为0, 会自动回收inode
+	return 0;
 }

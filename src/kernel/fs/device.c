@@ -103,23 +103,102 @@ static void device_register(uint32 index, char* name,
 /* 初始化device_table */
 void device_init()
 {
+	// 1. 清空表
+	for (int i = 0; i < (int)N_DEVICE; i++) {
+		memset(device_table[i].name, 0, MAXLEN_FILENAME);
+        device_table[i].read = NULL;
+        device_table[i].write = NULL;
+    }
 
+	// 2. 注册设备
+	device_register(INODE_MAJOR_STDIN,  "stdin",  device_stdin_read,  NULL);
+    device_register(INODE_MAJOR_STDOUT, "stdout", NULL,              device_stdout_write);
+    device_register(INODE_MAJOR_STDERR, "stderr", NULL,              device_stderr_write);
+    device_register(INODE_MAJOR_ZERO,   "zero",   device_zero_read,  NULL);
+    device_register(INODE_MAJOR_NULL,   "null",   device_null_read,  device_null_write);
+    device_register(INODE_MAJOR_GPT0,   "gpt0",   NULL,              device_gpt0_write);
+
+	// 3.  确保 /dev 存在（不存在则创建目录）
+	if (path_to_inode("/dev") == NULL) {
+        inode_t *devdir = path_create_inode("/dev", INODE_TYPE_DIR,
+            INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
+        if (devdir)
+            inode_put(devdir);
+    }
+
+	// 4. 确保 /dev/* 设备文件存在（不存在则创建 device inode）
+	struct { const char *path; uint16 major; } devs[] = {
+        {"/dev/stdin",  INODE_MAJOR_STDIN},
+        {"/dev/stdout", INODE_MAJOR_STDOUT},
+        {"/dev/stderr", INODE_MAJOR_STDERR},
+        {"/dev/zero",   INODE_MAJOR_ZERO},
+        {"/dev/null",   INODE_MAJOR_NULL},
+        {"/dev/gpt0",   INODE_MAJOR_GPT0},
+    };
+
+	for (int i = 0; i < (int)(sizeof(devs) / sizeof(devs[0])); i++) {
+		if (path_to_inode((char*)devs[i].path) != NULL)
+            continue;
+
+		// 创建设备文件 inode
+		inode_t *dip = path_create_inode((char*)devs[i].path, INODE_TYPE_DIVICE,
+            devs[i].major, INODE_MINOR_DEFAULT);
+        if (dip)
+            inode_put(dip);
+    }
 }
 
 /* 检查文件major字段的合法性 */
 bool device_open_check(uint16 major, uint32 open_mode)
 {
+	// major 超出范围
+	if (major >= N_DEVICE)
+		return false;
 
+	device_t *d = &device_table[major];
+    if (d->name[0] == 0)
+        return false;
+
+	bool want_r = (open_mode & FILE_OPEN_READ) != 0;
+    bool want_w = (open_mode & FILE_OPEN_WRITE) != 0;
+
+	// 打开的读/写权限与设备支持的操作不匹配
+	if (want_r && d->read == NULL)
+		return false;
+	if (want_w && d->write == NULL)
+		return false;
+
+	return true;
 }
 
 /* 从设备文件中读取数据 */
 uint32 device_read_data(uint16 major, uint32 len, uint64 dst, bool is_user_dst)
 {
+	// major 超出范围
+	if (major >= N_DEVICE)
+		return (uint32)-1;
 
+	device_t *d = &device_table[major];
+
+	// 设备不存在或不支持读操作
+    if (d->read == NULL)
+        return (uint32)-1;
+
+	return d->read(len, dst, is_user_dst);
 }
 
 /* 向设备文件写入数据 */
 uint32 device_write_data(uint16 major, uint32 len, uint64 src, bool is_user_src)
 {
+	// major 超出范围
+	if (major >= N_DEVICE)
+        return (uint32)-1;
 
+	device_t *d = &device_table[major];
+
+	// 设备不存在或不支持写操作
+	if (d->write == NULL)
+		return (uint32)-1;
+
+	return d->write(len, src, is_user_src);
 }
