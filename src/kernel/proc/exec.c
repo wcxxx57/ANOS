@@ -112,5 +112,100 @@ static uint64 prepare_stack(pgtbl_t new_pgtbl, char **argv, int *arg_count)
 */
 int proc_exec(char *path, char **argv)
 {
+	proc_t *p = myproc();
 	
+	// step-0: 准备全新的pagetable和trapframe
+	// 分配一个新的物理页作为 Trapframe
+   trapframe_t *new_tf = (trapframe_t*)pmem_alloc(false);
+    if (!new_tf) {
+        return -1;
+    }
+    memset(new_tf, 0, sizeof(trapframe_t));
+
+    // 初始化新页表，并将 new_tf_pa 映射到 TRAPFRAME 固定虚拟地址
+    // proc_pgtbl_init 负责建立内核映射和 Trapframe 映射
+    pgtbl_t new_pgtbl = proc_pgtbl_init((uint64)new_tf);
+    if (new_pgtbl == NULL) {
+        pmem_free((uint64)new_tf, false);
+        return -1;
+    }
+	
+	// step-1: 解析输入的文件路径, 获取ELF文件的inode
+	inode_t *ip = path_to_inode(path);
+	if (!ip) {
+		pmem_free((uint64)new_tf, false);
+		uvm_destroy_pgtbl(new_pgtbl);
+		return -1;
+	}
+	
+	// step-2: 读取ELF_header
+	elf_header_t eh;
+	if (inode_read_data(ip, 0, sizeof(eh), &eh, false) != sizeof(eh)) {
+		inode_put(ip);
+		pmem_free((uint64)new_tf, false);
+		uvm_destroy_pgtbl(new_pgtbl);
+		return -1;
+	}
+	
+	// 检查ELF magic
+	if (eh.magic != ELF_MAGIC) {
+		inode_put(ip);
+		pmem_free((uint64)new_tf, false);
+		uvm_destroy_pgtbl(new_pgtbl);
+		return -1;
+	}
+	
+	// step-3: 按照顺序读取需要载入内存的Segment, 填充到用户堆区域
+	uint64 new_heap_top = prepare_heap(new_pgtbl, ip, &eh);
+	if (new_heap_top == -1) {
+		inode_put(ip);
+		pmem_free((uint64)new_tf, false);
+		uvm_destroy_pgtbl(new_pgtbl);
+		return -1;
+	}
+	
+	// step-4: 释放ELF的inode
+	inode_put(ip);
+	
+	// step-5: 处理输入的参数列表argv, 填充到用户栈区域
+	int argc;
+	uint64 sp = prepare_stack(new_pgtbl, argv, &argc);
+	if (sp == -1) {
+		pmem_free((uint64)new_tf, false);
+		uvm_destroy_pgtbl(new_pgtbl);
+		return -1;
+	}
+	
+	// step-6: 新的地址空间构建完毕, 可以释放旧的资源了
+	uvm_destroy_pgtbl(p->pgtbl);
+	pmem_free((uint64)p->tf, false);
+	if (p->mmap) {
+		mmap_region_t *mmap = p->mmap;
+		while (mmap) {
+			mmap_region_t *next = mmap->next;
+			mmap_region_free(mmap);
+			mmap = next;
+		}
+	}
+	
+	// step-7: 设置trapframe的相关字段
+	new_tf->a0 = argc;        // 参数1: argc
+	new_tf->a1 = sp;          // 参数2: argv
+	new_tf->user_to_kern_epc = eh.entry;   // PC指针
+	new_tf->sp = sp;          // SP指针
+	
+	// step-8: 更新进程的相关字段
+	p->pgtbl = new_pgtbl;
+	p->tf = new_tf;
+	p->heap_top = new_heap_top;
+	p->ustack_npage = 1;      // 栈1页
+	p->mmap = NULL;
+	int i;
+    for(i = 0; i < sizeof(p->name) - 1 && path[i] != '\0'; i++){
+        p->name[i] = path[i];
+    }
+    p->name[i] = '\0';
+	p->name[sizeof(p->name) - 1] = '\0';
+	
+	return argc;
 }

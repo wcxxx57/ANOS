@@ -55,7 +55,7 @@ void proc_init()
 
     // 初始化进程数组
     for (int i = 0; i < N_PROC; i++) {
-        memset(&proc_list[i], 0, sizeof(proc_t));
+        memset(&proc_list[i], 0, sizeof(proc_t)); // 初始化为null
         spinlock_init(&proc_list[i].lk, "proc_lock");
     }
     // proczero 指向第一个槽位
@@ -105,6 +105,19 @@ void proc_free(proc_t *p)
     if (p->pgtbl) {
         uvm_destroy_pgtbl(p->pgtbl); 
         p->pgtbl = NULL;
+    }
+
+    // 释放open_file
+    for (int i = 0; i < N_OPEN_FILE_PER_PROC; i++) {
+        if (p->open_file[i]) {
+            file_close(p->open_file[i]);
+            p->open_file[i] = NULL;
+        }
+    }
+    // 释放cwd
+    if (p->cwd) {
+        inode_put(p->cwd);
+        p->cwd = NULL;
     }
 
     // 清空结构体并置为 UNUSED
@@ -213,6 +226,13 @@ void proc_make_first()
     p->mmap = NULL;
     p->state = RUNNABLE;
 
+    // 设置open_file: 打开stdin, stdout, stderr
+    p->open_file[0] = file_open("/dev/stdin", FILE_OPEN_READ);
+    p->open_file[1] = file_open("/dev/stdout", FILE_OPEN_WRITE);
+    p->open_file[2] = file_open("/dev/stderr", FILE_OPEN_WRITE);
+    // 设置cwd为根目录
+    p->cwd = inode_get(ROOT_INODE);
+
     // 5. 设置 trapframe 中的入口与用户栈
     tf->user_to_kern_epc = UCODE_VA;
     tf->sp = USTACK_TOP;
@@ -249,11 +269,27 @@ int proc_fork()
     child->pgtbl = proc_pgtbl_init((uint64)tf);
     child->heap_top = parent->heap_top;
     child->ustack_npage = parent->ustack_npage;
+    child->mmap = NULL; // 子进程初始无mmap
     child->state = RUNNABLE;
 
     // 复制页表
     uvm_copy_pgtbl(parent->pgtbl, child->pgtbl, parent->heap_top, parent->ustack_npage, parent->mmap);
-    
+
+    // 继承open_file
+    for (int i = 0; i < N_OPEN_FILE_PER_PROC; i++) {
+        if (parent->open_file[i]) {
+            child->open_file[i] = file_dup(parent->open_file[i]);
+        } else {
+            child->open_file[i] = NULL;
+        }
+    }
+    // 继承cwd
+    if (parent->cwd) {
+        child->cwd = inode_dup(parent->cwd);
+    } else {
+        child->cwd = NULL;
+    }
+
     int pid = child->pid;
     spinlock_release(&child->lk);
     return pid;

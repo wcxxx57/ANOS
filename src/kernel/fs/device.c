@@ -157,15 +157,16 @@ bool device_open_check(uint16 major, uint32 open_mode)
 
 	device_t *d = &device_table[major];
     if (d->name[0] == 0)
-        return false;
+		return false;
+        
 
 	bool want_r = (open_mode & FILE_OPEN_READ) != 0;
     bool want_w = (open_mode & FILE_OPEN_WRITE) != 0;
 
 	// 打开的读/写权限与设备支持的操作不匹配
-	if (want_r && d->read == NULL)
+	if (want_r && d->read == NULL)  
 		return false;
-	if (want_w && d->write == NULL)
+	if (want_w && d->write == NULL) 
 		return false;
 
 	return true;
@@ -181,8 +182,8 @@ uint32 device_read_data(uint16 major, uint32 len, uint64 dst, bool is_user_dst)
 	device_t *d = &device_table[major];
 
 	// 设备不存在或不支持读操作
-    if (d->read == NULL)
-        return (uint32)-1;
+    if (d->read == NULL)  
+		return (uint32)-1;
 
 	return d->read(len, dst, is_user_dst);
 }

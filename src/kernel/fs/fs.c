@@ -55,8 +55,7 @@ file_t* file_open(char *path, uint32 open_mode)
     bool want_w = (open_mode & FILE_OPEN_WRITE) != 0;
 
 	// 必须至少读/写之一
-    if (!want_r && !want_w)
-        return NULL;
+    if (!want_r && !want_w)   return NULL;
 
 	// 1. 先按路径找 inode
 	inode_t *ip = path_to_inode(path);
@@ -66,8 +65,7 @@ file_t* file_open(char *path, uint32 open_mode)
         ip = path_create_inode(path, INODE_TYPE_DATA, 
 			INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
     }
-	if (ip == NULL)
-		return NULL; // 文件不存在且未创建成功
+	if (ip == NULL)   return NULL; // 文件不存在且未创建成功
 
 	// 3. 若是设备文件：检查权限合法性
 	inode_lock(ip);
@@ -135,10 +133,13 @@ void file_close(file_t *file)
 /* 读取文件内容, 返回读到的字节数量 */
 uint32 file_read(file_t* file, uint32 len, uint64 dst, bool is_user_dst)
 {
-	if (file == NULL || file->ip == NULL)
-        return (uint32)-1;
-    if (!file->readable)
-        return (uint32)-1;
+	if (file == NULL || file->ip == NULL){
+		return (uint32)-1;
+	}
+    if (!file->readable){
+		return (uint32)-1;
+	}
+        
 
 	inode_t *ip = file->ip;
 
@@ -182,10 +183,13 @@ uint32 file_read(file_t* file, uint32 len, uint64 dst, bool is_user_dst)
 /* 写入文件内容, 返回写入的字节数量 */
 uint32 file_write(file_t* file, uint32 len, uint64 src, bool is_user_src)
 {
-	if (file == NULL || file->ip == NULL)
-        return (uint32)-1;
-    if (!file->writbale)
-        return (uint32)-1;
+	if (file == NULL || file->ip == NULL){
+		return (uint32)-1;
+	}	
+    if (!file->writbale){
+		return (uint32)-1;
+	}
+        
 
 	inode_t *ip = file->ip;
 
