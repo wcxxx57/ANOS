@@ -39,10 +39,21 @@ static int alloc_pid()
 static void proc_return()
 {
     proc_t *p = myproc();
-    // 回到用户态前释放进程锁
-    spinlock_release(&p->lk); 
-    // 初始化文件系统
-    fs_init();
+
+    spinlock_release(&p->lk); // 先释放锁
+    // 如果是第一个进程(proczero)，则进行特殊初始化
+    if (p->pid == 1) {
+        // 初始化文件系统
+        fs_init();
+        // 设置open_file: 打开stdin, stdout, stderr
+        p->open_file[0] = file_open("/dev/stdin", FILE_OPEN_READ);
+        p->open_file[1] = file_open("/dev/stdout", FILE_OPEN_WRITE);
+        p->open_file[2] = file_open("/dev/stderr", FILE_OPEN_WRITE);
+        // 设置cwd为根目录
+        p->cwd = inode_get(ROOT_INODE);
+    }
+
+    // 回到用户态
     trap_user_return();
 }
 
@@ -173,6 +184,7 @@ pgtbl_t proc_pgtbl_init(uint64 trapframe)
 */
 void proc_make_first()
 {
+    printf("I'm here.");
     // 通过通用分配接口申请 proczero（返回时持有锁）
     proc_t *p = proc_alloc();
     if (!p) panic("proc_make_first: proc_alloc failed");
@@ -226,13 +238,6 @@ void proc_make_first()
     p->mmap = NULL;
     p->state = RUNNABLE;
 
-    // 设置open_file: 打开stdin, stdout, stderr
-    p->open_file[0] = file_open("/dev/stdin", FILE_OPEN_READ);
-    p->open_file[1] = file_open("/dev/stdout", FILE_OPEN_WRITE);
-    p->open_file[2] = file_open("/dev/stderr", FILE_OPEN_WRITE);
-    // 设置cwd为根目录
-    p->cwd = inode_get(ROOT_INODE);
-
     // 5. 设置 trapframe 中的入口与用户栈
     tf->user_to_kern_epc = UCODE_VA;
     tf->sp = USTACK_TOP;
@@ -240,6 +245,7 @@ void proc_make_first()
     // 6. 记录为 proczero 并解锁
     proczero = p;
     spinlock_release(&p->lk);
+    printf("leave proc_make_first");
 }
 
 /*

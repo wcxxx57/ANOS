@@ -74,12 +74,12 @@ uint64 sys_mmap()
 
     uint64 ret_addr = uvm_mmap(start, npages, perm);
 
-    // 调试
-    proc_t *p = myproc();
-    printf("sys_mmap: start = %p, len = 0x%x, ret_addr = %p\n", (void *)start, len, (void *)ret_addr);
-    uvm_show_mmaplist(p->mmap);
-    vm_print(p->pgtbl);
-    printf("\n");
+    // // 调试
+    // proc_t *p = myproc();
+    // printf("sys_mmap: start = %p, len = 0x%x, ret_addr = %p\n", (void *)start, len, (void *)ret_addr);
+    // uvm_show_mmaplist(p->mmap);
+    // vm_print(p->pgtbl);
+    // printf("\n");
 
     return ret_addr;
 }
@@ -450,7 +450,8 @@ uint64 sys_print_cwd()
     uint32 offset = inode_to_path(p->cwd, path, STR_MAXLEN + 1);
     if (offset == (uint32)-1) return -1;
     
-    printf("%s\n", path + offset);
+    path[STR_MAXLEN+1] = '\0'; 
+    printf("current work directory:%s\n", path + offset);
     return 0;
 }
 
