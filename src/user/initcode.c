@@ -2,8 +2,8 @@
 
 int main()
 {
-	char path[] = "./test_1";
-	char arg0[] = "test_1";
+	char path[] = "./test_5";
+	char arg0[] = "test_5";
 	char arg1[] = "111";
 	char arg2[] = "222";
 	char arg3[] = "333";

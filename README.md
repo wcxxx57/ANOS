@@ -1,23 +1,22 @@
 # LAB-9: 文件系统 之 文件管理与全系统整合
 
-**前言**
+在 Lab-7 和 Lab-8 中，我们自底向上构建了磁盘驱动、Buffer Cache、Inode 管理以及目录树结构，实现了对物理磁盘的抽象。然而，对于操作系统之上的用户程序而言，**直接操作 Inode 是繁琐且不安全的**。
 
-恭喜你完成了前8次实验, 来到最后一个关卡
+Lab-9 是整个操作系统内核构建的最终章。在本实验中，我们将打通文件系统与进程管理、内存管理的“任督二脉”：
+- 我们将屏蔽底层 Inode 与设备的差异，实现“**一切皆文件**”的抽象。
+- 同时，我们将赋予内核加载并执行用户态 ELF 程序的能力，让我们的 OS 真正 **“活”起来**。
 
-最后一个实验的内容比较多, 难度也比较大, 既是实验也是测验
+我们的分工如下：
 
-- 测验你对整个系统的理解：内存、进程、文件系统、用户态程序等
+**吴晨曦**：
 
-- 测验你的编码与调试能力：文件操作、路径操作、ELF解析、系统调用等
+**丁熙妍**：完成了 **目录项（Dentry）** 的高级功能（相对路径解析、逆向路径解析、文件/目录的创建、硬链接）；完成了 **文件抽象层（File）** 与 **设备管理（Device）** 的实现，负责 file_t 结构体的生命周期管理及设备文件的读写分发。
 
-不用担心, 助教会屏蔽大部分繁琐但不重要的工作, 并梳理实验脉络
-
-这大概要花费你好几天时间, 现在就开始吧!
 
 ## 代码组织结构
 
 ```
-ECNU-OSLAB-2025-TASK
+ANOS
 ├── LICENSE        开源协议
 ├── .vscode        配置了可视化调试环境
 ├── registers.xml  配置了可视化调试环境
@@ -25,7 +24,7 @@ ECNU-OSLAB-2025-TASK
 ├── common.mk      Makefile中一些工具链的定义
 ├── Makefile       编译运行整个项目 (CHANGE)
 ├── picture        README使用的图片目录 (CHANGE)
-├── README.md      实验指导书 (CHANGE)
+├── README.md      实验报告 (CHANGE)
 └── src            源码
     ├── kernel     内核源码
     │   ├── arch   RISC-V相关
@@ -51,9 +50,9 @@ ECNU-OSLAB-2025-TASK
     │   │   ├── mod.h
     │   │   └── type.h (CHANGE)
     │   ├── mem    内存模块
-    │   │   ├── pmem.c (TODO, 增加函数pmem_stat用于获取剩余页面数量信息)
+    │   │   ├── pmem.c (本实验补充, 增加函数pmem_stat用于获取剩余页面数量信息)
     │   │   ├── kvm.c
-    │   │   ├── uvm.c (TODO, 修改uvm_heap_grow以支持flag的输入)
+    │   │   ├── uvm.c (本实验补充, 修改uvm_heap_grow以支持flag的输入)
     │   │   ├── mmap.c
     │   │   ├── method.h (CHANGE)
     │   │   ├── mod.h
@@ -69,25 +68,25 @@ ECNU-OSLAB-2025-TASK
     │   │   ├── mod.h
     │   │   └── type.h
     │   ├── proc   进程模块
-    │   │   ├── proc.c (TODO, 增加open_file和cwd的初始化、设置、销毁逻辑)
-    │   │   ├── exec.c (TODO, 操作ELF文件以填充新的进程)
+    │   │   ├── proc.c (本实验补充, 增加open_file和cwd的初始化、设置、销毁逻辑)
+    │   │   ├── exec.c (本实验完成, 操作ELF文件以填充新的进程)
     │   │   ├── swtch.S
     │   │   ├── method.h (CHANGE)
     │   │   ├── mod.h
     │   │   └── type.h (CHANGE)
     │   ├── syscall 系统调用模块
-    │   │   ├── syscall.c (TODO, 新的系统调用)
-    │   │   ├── sysfunc.c (TODO, 新的系统调用)
-    │   │   ├── method.h (TODO, 新的系统调用)
+    │   │   ├── syscall.c (本实验补充, 新的系统调用)
+    │   │   ├── sysfunc.c (本实验补充, 新的系统调用)
+    │   │   ├── method.h (本实验补充, 新的系统调用)
     │   │   ├── mod.h
-    │   │   └── type.h (TODO, 新的系统调用)
+    │   │   └── type.h (本实验补充, 新的系统调用)
     │   ├── fs     文件系统模块
     │   │   ├── bitmap.c
     │   │   ├── buffer.c
     │   │   ├── inode.c
-    │   │   ├── device.c (TODO, 增加设备文件操作逻辑)
-    │   │   ├── dentry.c (TODO, 增加目录和路径的功能)
-    │   │   ├── fs.c (TODO, 增加文件操作逻辑)
+    │   │   ├── device.c (本实验完成, 增加设备文件操作逻辑)
+    │   │   ├── dentry.c (本实验补充, 增加目录和路径的功能)
+    │   │   ├── fs.c (本实验补充, 增加文件操作逻辑)
     │   │   ├── virtio.c
     │   │   ├── method.h (CHANGE)
     │   │   ├── mod.h
@@ -113,294 +112,162 @@ ECNU-OSLAB-2025-TASK
         └── syscall_num.h (CHANGE, 新的系统调用)
 ```
 
-**标记说明**
+相对于上一个实验, 本实验主要增加了以下功能：
 
-**NEW**: 新增源文件, 直接拷贝即可, 无需修改
+- **实现了“一切皆文件”的抽象**：引入 `file_t` 结构体，屏蔽了底层 Inode 与字符设备的差异，为上层提供了统一的读写接口。
+- **构建了设备驱动框架**：实现了 `stdin`, `stdout`, `null`, `zero` 等虚拟字符设备，并支持行缓冲的控制台 I/O。
+- **实现了 ELF 程序加载器**：完成了 `exec` 逻辑，能够解析 ELF 文件头，加载代码段/数据段，并构建用户栈，使内核具备了运行用户程序的能力。
+- **完善了进程与文件系统的交互**：在进程控制块中集成了 **当前工作目录 (CWD)** 和 **打开文件表**，支持 `fork` 时的文件描述符继承。
+- **增强了目录与路径功能**：支持了基于当前工作目录 (CWD) 的 **相对路径解析**；实现了**文件/目录的创建**操作；实现了 **逆向路径解析**，支持从 Inode 回溯绝对路径；实现了 **硬链接 (Hard Link)** 机制，允许不同路径指向同一 Inode。
+- **构建了用户态运行环境**：扩充了系统调用接口 (`syscall`)，新增了 `open`, `exec` 等核心调用，并提供了 `printf`, `open` 等基础用户态库函数，为用户程序的运行奠定了基础。
 
-**CHANGE**: 旧的源文件发生了更新, 直接拷贝即可, 无需修改
+## 具体实现
 
-**TODO**: 你需要实现新功能 / 你需要完善旧功能
+### 1. dentry.c
 
-## 第1步: 准备工作
+在 Lab-8 的基础上，我们进一步完善了目录操作，重点实现了**相对路径解析**、**逆向路径解析**和**硬链接**。
 
-1. 新建目录**src/loader/**, 将kernel.ld放到这个目录下并创建user.ld (可以比较一下它们的异同)
+#### 1.1 路径解析的增强 (`__path_to_inode`)
 
-2. 在**src/kernel/mem/pmem.c**中实现`pmem_stat`, 用于获取当前的可用内存情况
+为了支持相对路径（如 `./file.txt`）和绝对路径（如 `/home/user/file.txt`）的统一解析，我们在 `__path_to_inode` 中引入了**起始目录判断逻辑**：
+- 若路径以 `/` 开头，从**根目录** `ROOT_INODE` 开始解析。
+- 若路径不以 `/` 开头，从当前进程的 `cwd`（**当前工作目录**）开始解析。
 
-3. 修改**src/kernel/mem/uvm.c**中的`uvm_heap_grow`, 内存区域的flag由默认的可读可写改成可输入的参数
+#### 1.2 文件/目录的创建 (`path_create_inode`)
 
-4. 为了支持行缓冲的输入, 我们在**src/kernel/lib/console.c**中实现了控制台的抽象。它的诞生对**uart.c**和**print.c**产生了一些影响, 请你按照提示进行对应的修改
+这是 `open(O_CREATE)` 和 `mkdir` 的核心后端。它不仅仅是创建一个 Inode，还负责维护目录树的一致性：
+1.  **解析父目录**：首先调用 `path_to_parent_inode` 找到目标路径的父目录 Inode。
+2.  **查重与创建**：在父目录中检查是否重名。若无重名，则分配新的 Inode。
+3.  **关联目录项**：在父目录中创建新的 Dentry 指向新 Inode。
+4.  **原子性保证**：如果中间任何一步失败（如磁盘满），会触发**回滚机制** —— 将新分配的 Inode 的 `nlink` 置 0，防止产生孤儿 Inode。
 
-5. 阅读 **src/user/** 中的各个源文件, 理解它们的组织架构和测试流程
 
-6. 阅读**Makefile**和**src/mkfs/mkfs.c**, 理解各个测试程序如何写入**disk.img**
+#### 1.3 逆向路径解析 (`inode_to_path`)
 
-## 第2步: 完善文件系统 (fs)
+为了支持 `getcwd` （获取当前工作目录路径）等功能，我们需要**从一个 Inode 回溯出它的绝对路径**。这依赖于我们新增的底层函数 **`dentry_search_2`**。
 
-**2.1 在lab-8中实现了dentry和path的部分函数，我们先进行补全**
+- **反向查找 (`dentry_search_2`)**：
+  不同于普通的 `dentry_search` 是通过文件名查找 Inode 号， `dentry_search_2` 则是**通过 Inode 号反查文件名**。
+  - 它遍历目录的数据块，对比每个目录项的 `inode_num`，若匹配则将对应的 `name` 拷贝出来。
 
-```c
-// in dentry.c
-uint32 dentry_search_2(inode_t *ip, uint32 inode_num, char *name); // 基于inode_num搜索name
-uint32 dentry_transmit(inode_t *ip, uint64 dst, uint32 len, bool is_user_dst); // 传输有效目录项
-uint32 inode_to_path(inode_t *ip, char *path, uint32 len); // 与__path_to_inode相反的解析过程
-inode_t* path_create_inode(char *path, uint16 type, uint16 major, uint16 minor); // 创建新的inode
-uint32 path_link(char *old_path, char *new_path); // 建立硬链接
-uint32 path_unlink(char *path); // 解除硬链接
+- **回溯流程 (`inode_to_path`)**：
+  基于 `dentry_search_2`，我们实现了自底向上的路径构建：
+  1. 检查当前 Inode 是否为根目录。
+  2. 若不是，在当前目录中查找 **`..`（父目录）** 的 `inode_num`。
+  3. 进入父目录，调用 **`dentry_search_2`** 反查子 Inode 对应的**文件名**。
+  4. 将文件名拼接到缓冲区前端，重复上述步骤，直到到达根目录。
+  
+
+#### 1.4 硬链接机制 (`path_link` / `path_unlink`)
+
+硬链接机制是文件系统灵活性的体现，允许文件系统中的**多个目录项（Dentry）指向同一个物理 Inode**，从而实现文件的多路径访问。
+
+- **创建硬链接 (`path_link`)**：
+  该操作本质上是“**增加引用**”。
+  1.  首先解析 `old_path` 获取目标 Inode，并**禁止对目录创建硬链接**，以防环路。
+  2.  解析 `new_path` 的父目录，并在其中创建一个新的 Dentry，使其指向目标 Inode。
+  3.  原子性地**增加目标 Inode 的 `nlink` 计数**并同步回磁盘。
+
+- **解除硬链接 (`path_unlink`)**：
+  该操作本质上是“**减少引用**”。
+  1.  在父目录中查找并删除对应的 Dentry（将 `name` 清零）。
+  2.  获取目标 Inode 锁，**递减其 `nlink` 计数**。
+  3.  **资源回收**：当 `nlink` 降为 0 且内存引用 `ref` 也为 0 时（在 `inode_put` 中触发），系统会**自动回收**该 Inode 及其占用的所有数据块，实现文件的物理删除。
+
+### 2. fs.c
+
+这是实现“一切皆文件”的关键。在深入实现之前，我们需要先厘清 **File** 与 **Inode** 的核心区别：
+
+- **Inode (全局共享)**：代表文件的**物理实体**。它是**静态**的，记录了文件的大小、磁盘块位置等信息，且需要**持久化存储**在磁盘上。
+- **File (进程私有)**：代表进程对文件的**一次打开操作**。它是**动态**的，记录了当前的**读写偏移量 (offset)**、**访问权限 (readable/writable)** 等运行时状态，仅存在于内存中，**不持久化**。
+
+#### 2.1 File 的生命周期管理
+
+我们引入了 `file_t` 结构体作为进程与底层资源之间的中间层，并实现了一系列管理函数：
+
+- **初始化与分配 (`file_init` / `file_alloc`)**：
+  - 初始化全局文件表锁 `lk_file_table`。
+  - 分配时，线性扫描 `file_table` 寻找 `ref == 0` 的空闲槽位。
+
+- **打开文件 (`file_open`)**：
+  这是连接用户路径与内核资源的桥梁。
+  1.  调用 `path_to_inode` 解析路径获取 Inode。
+  2.  若文件不存在且指定了 `O_CREATE`，则调用 `path_create_inode` **创建新文件**。
+  3.  若是设备文件，调用 `device_open_check` 进行权限检查。
+  4.  分配 `file_t`，初始化权限位和 `offset = 0`，并绑定 Inode。
+
+- **复制与关闭 (`file_dup` / `file_close`)**：
+  - `file_dup`：仅**增加引用计数** `ref`（如 `fork` 时子进程继承父进程文件表）。
+  - `file_close`：**递减引用计数**。当 `ref` 降为 0 时，释放 `file_t` 槽位，并调用 `inode_put` 释放底层的 Inode。
+
+- **指针移动 (`file_lseek`)**：
+  调整 `file->offset`，支持 **`SET` (绝对位置)**、**`ADD` (相对当前)**、**`SUB` (向前回退)** 三种模式。
+
+
+#### 2.2 统一的读写分发逻辑 (`file_read` / `file_write`)
+
+我们在 `fs.c` 中实现了统一的 I/O 入口。根据底层 Inode 的类型，请求会被路由到不同的处理模块，具体流程如下：
+
+```mermaid
+graph LR
+    %% 节点样式定义
+    classDef user fill:#e1f5fe,stroke:#0187ab,stroke-width:2px;
+    classDef fs fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
+    classDef impl fill:#e8f5e9,stroke:#21a612,stroke-width:2px;
+
+    User[用户进程 sys_read]:::user --> FileRead[file_read]:::fs
+    FileRead --> Check{Inode Type?}:::fs
+    
+    Check -- DATA --> InodeRead[inode_read_data<br/> 【读磁盘数据块】]:::impl
+    Check -- DIR --> DentryTrans[dentry_transmit<br/>【读目录项】]:::impl
+    Check -- DEVICE --> DeviceRead[device_read_data<br/>【调用设备驱动】]:::impl
 ```
 
-前两个函数相对简单, 你可以参考之前实现的`dentry_search`和`dentry_print`来做, 核心操作都是目录项遍历
+- **普通文件 (DATA)**：调用 `inode_read_data` / `inode_write_data`，直接读写磁盘数据块，并自动更新 `offset`。
+- **目录文件 (DIR)**：调用 `dentry_transmit`。该函数遍历目录的数据块，将有效的 `dentry_t` 结构体序列化并拷贝到用户缓冲区。
+  - 这里需要注意：底层函数 `dentry_transmit` 是**无状态**的（每次调用默认从头开始），因此我们在 `file_read` 中利用 `file->offset` 维护了**读取进度**。这确保了当用户分多次调用 `read` 时，系统能**跳过已读内容**，正确地遍历整个目录，而不是死循环读取第一个文件。
+- **设备文件 (DEVICE)**：调用 `device_read_data` / `device_write_data`，转发给设备驱动程序（不经过磁盘 Buffer Cache）。
 
-`inode_to_path`相对复杂, 它的作用是获取某个inode(目录类型)的绝对路径, 也就是从某个节点开始回溯到树根节点
+### 3. device.c
 
-我们知道, 正向查找 (`path_to_inode`) 的理论依据是`dentry_search`操作进行文件名匹配
+设备文件不占用磁盘数据块，而是通过 **主设备号 (Major)** 映射到内核中的函数指针表。我们构建了一个**通用的设备驱动框架**，使得内核可以像操作文件一样操作硬件或虚拟设备。
 
-对应的, 逆向查找 (`inode_to_path`) 的理论依据是之前埋好的`..`目录项, 它对应的inode_num就是上级节点的inode_num
+#### 3.1 基础设备实现
 
-注意: 由于采用逆向填充方法, 所以缓冲区的使用也是从后往前的, 返回偏移量 (**path + offset**才是绝对路径字符串的起点)
+我们在 `device.c` 中集成了多种基础字符设备：
 
-下一个需要实现的函数是`path_create_inode`, 它基于目标路径来创建新的inode, 包括inode的申请和目录项的创建等
+- **标准输入 (`stdin`,  Major 1)**：映射到 `cons_read`，从控制台缓冲区读取输入。
+- **标准输出 (`stdout`,  Major 2)**：映射到 `cons_write`，向控制台输出字符。
+- **标准错误 (`stderr`,  Major 3)**：映射到 `cons_write`，但在输出内容前会自动添加 `"ERROR: "` 前缀，用于区分错误信息。
+- **空设备 (`null`,  Major 4)**：写入操作直接丢弃（返回写入长度），读取操作立即返回 0 (EOF)。
+- **零设备 (`zero`,  Major 5)**：读取时利用 `pmem_alloc` 分配全 0 页进行高效拷贝，提供无限的 0 数据流。
+- **交互设备 (`gpt0`,  Major 6)**：一个简单的问答交互设备，演示了设备驱动处理复杂逻辑的能力。
+  
+#### 设备驱动框架的设计
 
-在之前的假设中, 一个inode只对应一个绝对路径, 这可能带来一些不方便:
+为了管理上述设备，我们设计了通用的驱动框架：
 
-假设一个你经常使用的文件处于很深的绝对路径中, 打开它就变得麻烦了
+- **注册与初始化 (`device_init`)**：
+  1.  清空全局设备表 `device_table`。
+  2.  **注册**所有支持的设备回调函数。
+  3.  **自动创建设备节点**：检查磁盘上的 `/dev` 目录及 `/dev/stdin` 等文件是否存在。若不存在，自动调用 `path_create_inode` 创建对应的**设备类型 Inode**，确保了文件系统的一致性。
 
-为了解决这个问题, 我们引入了硬链接的方法: 一个inode可以对应多个绝对路径 
+- **权限检查 (`device_open_check`)**：
+  在文件打开阶段，根据主设备号**检查操作的合法性**。例如，`stdin` 只允许读，`stdout` 只允许写。如果用户尝试以错误的模式（如写 stdin）打开设备，系统将**拒绝该请求**。
 
-/AAA/BBB/CCC/DDD/hello.txt 对应 inode-23, /link.txt 也对应 inode-23
+- **读写接口 (`device_read_data` / `device_write_data`)**：
+  这是**设备操作的统一入口**。函数内部根据传入的 `major` 主设备号，在 `device_table` 中查找对应的函数指针（`read` 或 `write`），并进行调用转发。
 
-实现这一点只需要做两件事: (1) inode-23.nlink++ (2) 在根目录下增加一条dentry {link.txt, 23}
+## 测试与验证
 
-对应的, unlink操作也完成两件事: (1) inode.nlink-- (2) 删除一条dentry
+### test5：多进程文件共享
 
-它还需要考虑一个问题: inode的资源释放 (当nlink减到0, 意味着用户无法通过路径方法访问这个inode, 需要在磁盘中释放它)
-
-资源释放的判断逻辑, 我们在`inode_put`中已经实现了, 这里不必显式执行`inode_delete`操作
-
-理解这些部分后, 请你动手实现 `path_link` 与 `path_unlink`
-
-**2.2 补全了dentry.c中的函数后, 我们正式引入文件的抽象**
-
-你可能听过一句话: Linux秉持一切皆文件的设计哲学; 下面详细讨论"文件"的定义与实现方法
-
-```c
-typedef struct file {
-    inode_t *ip;        // 对应的inode
-    bool readable;      // 是否可读
-    bool writbale;      // 是否可写
-    uint32 offset;      // 读/写指针的偏移量
-    uint32 ref;         // 引用数 (lk_file_table保护)
-} file_t;
-
-file_t file_table[N_FILE]; // 文件资源池
-spinlock_t lk_file_table; // 保护它的锁
+测试代码见 `src/user/test_5.c`。本补充测试旨在验证 `fork` 后**父子进程对文件资源的共享机制**，逻辑如下：
 
 ```
-
-除了inode指针, 文件还包括读写权限字段、读写指针偏移量字段、引用数字段
-
-其中读写权限字段在文件开始时设置、偏移量字段在文件读写时设置、引用数字段在文件打开关闭复制时设置
-
-值得注意的是, 不同于inode、buffer等全局共享资源; 对于进程来说, 文件提供了一种独占inode资源的假象
-
-文件的读写权限、指针偏移量等, 只有持有这个文件的进程关心, 无需上锁; 而引用数需要全局的lk_file_table保护
-
-我们可以梳理一下file与inode的区别: 
-
-- file是进程私有的、具备动态语义的、字段不做持久化存储的 数据集合管理者
-
-- inode是全局共享的、只有静态语义的、字段进行持久化存储的 数据集合管理者
-
-理解上述概念后, 请你实现一系列文件相关的函数
-
-```c
-// in fs.c
-void file_init(); // 初始化file_table和锁
-file_t* file_alloc(); // 获取空闲file
-file_t* file_open(char *path, uint32 open_mode); // 打开文件(注意打开模式)
-void file_close(file_t *file); // 关闭文件
-uint32 file_read(file_t* file, uint32 len, uint64 dst, bool is_user_dst); // 读取文件
-uint32 file_write(file_t* file, uint32 len, uint64 src, bool is_user_src); // 写入文件
-uint32 file_lseek(file_t *file, uint32 lseek_offset, uint32 lseek_flag); // 读写指针移动
-file_t* file_dup(file_t* file); // 复制文件使用权
-uint32 file_get_stat(file_t* file, uint64 user_dst); // 获取文件状态
+父进程打开文件 -> Fork -> 子进程写入 -> 子进程退出 -> 父进程检查 offset -> 父进程继续写入
 ```
 
-在实现这些函数的过程中, 你应该注意到: `file_read` 和 `file_write` 需要用到swich-case做分类处理
+测试结果见：[test-5.png](pictures/test-5.png)，可以看到父进程成功检测到了子进程写入后产生的**偏移量变化**（Current offset is 18），且在子进程退出后**仍能继续写入**，最终文件内容完整拼接了双方的数据。这验证了 `file_t` 结构体在 `fork` 时的**正确复制与引用计数管理**。
 
-file type 与 inode type 是匹配的, 分成: 数据文件(流式)、目录文件（结构化）、设备文件（特殊定义）
-
-**2.3 数据文件和目录文件我们比较熟悉了, 下面重点介绍设备文件的情况**
-
-在我们的设计中, 设备文件的分类只使用主设备号**inode->major**, 次设备号都使用**default**
-
-设备文件的核心特性是支持**读写**操作, 不同于另外两种文件的读写都是在磁盘上进行的
-
-设备文件的读写操作是可以灵活定义的, 我们定义了六种设备文件:
-
-- **/dev/stdin**: 标准输入 (行缓冲), 可读
-
-- **/dev/stdout**: 标准输出, 可写
-
-- **/dev/stderr**: 标准错误输出 (前置输出“ERROR”), 可写
-
-- **/dev/zero**: 零文件 (可以读到任意多的零字节), 可读
-
-- **/dev/null**: 黑洞文件 (读到的字节数永远是0, 写入多少字节都可以), 可读可写
-
-- **/dev/gpt0**: 小彩蛋 (可以回答预设问题的笨蛋版本GPT), 可写
-
-这六种设备文件的读写函数已经给出, 你需要实现下面的功能:
-
-```c
-// in device.c
-void device_init(); // 初始化device_table, 保证各个设备文件/dev/xxx在磁盘中存在
-bool device_open_check(uint16 major, uint32 open_mode); // 检查设备文件是否存在及打开权限的合法性
-uint32 device_read_data(uint16 major, uint32 len, uint64 dst, bool is_user_dst); // 读接口
-uint32 device_write_data(uint16 major, uint32 len, uint64 src, bool is_user_src); // 写接口
-```
-
-注意: `device_init`和`file_init`应该在`fs_init`中被调用
-
-## 第3步: 进程与文件系统 (proc/proc.c)
-
-完成文件系统的补全工作后, 我们进一步讨论进程模块与文件系统模块的协作
-
-首先在进程结构体中增加打开文件表字段`open_file`和当前工作目录字段`cwd`
-
-前者记录当前进程打开的文件指针, 后者记录了当前进程**站在**文件系统树中的哪个位置
-
-我们需要修改哪些地方以支持这两个字段的生命周期呢?
-
-- `proc_init`: 初始化资源(设为NULL)
-
-- `proc_return`: 对于新生的proczero, 手动设置open_file(依次打开stdin stdout stderr)和cwd(设为根目录)
-
-- `proc_fork`: 对于其他进程, 直接继承父进程的open_file和cwd即可(file_dup + inode_dup)
-
-- `proc_free`: 释放资源(设为NULL)
-
-和我们之前说的一样, 你会发现文件的生命周期与进程的生命周期是高度吻合的
-
-支持cwd字段使得相对路径 (如./hello.txt or hello.txt or ../hello.txt) 变得可能 (区别于以`/`开头的绝对路径)
-
-对应的, 请你修改路径解析函数 `__path_to_inode` 以支持基于相对路径搜索inode
-
-## 第4步: 执行ELF文件 (proc/exec.c)
-
-首先思考一下只有fork的OS内核是什么样的?
-
-我们实现了initcode.c, 其他进程通过fork产生, 内容上和proczero没什么区别...
-
-为了实现丰富多彩的用户软件, 只有fork是不够的, 我们还要有执行ELF文件的能力
-
-ELF文件编译链接的最终产物, OS内核读取和解析ELF文件, 在复制品的壳子上构建全新的血肉 (fork + exec)
-
-ELF文件的组织结构通常是: [ELF_header | Programe_header | seg-1 | seg-2 | ... | Section_header]
-
-其中ELF_header描述了全局的情况 (类似Superblock), Programe_header描述了各个segment的情况 (类似inode region)
-
-接下来我们讨论如何实现非常重要的函数`proc_exec`
-
-- step-0: 准备全新的pagetable和trapframe (为了防止中途崩溃, 我们不能直接修改旧的)
-
-- step-1: 解析输入的文件路径, 获取ELF文件的inode
-
-- step-2: 读取ELF_header, 其中**对Programe_header的描述字段**和**ELF程序入口地址**是我们关心的
-
-- step-3: 按照顺序读取需要载入内存的Segment, 填充到用户堆区域 (`prepare_heap`)
-
-- step-4: 释放ELF的inode
-
-- step-5: 处理输入的参数列表**argv**, 填充到用户栈区域 (`prepare_stack`)
-
-- step-6: 新的地址空间构建完毕, 可以释放旧的资源了
-
-- step-7: 设置trapframe的相关字段: 返回用户态的参数1(argc)、参数2(argv)、PC指针、SP指针
-
-- step-8: 更新进程的相关字段: 页表、trapframe、heap_top、ustack_npage、mmap、name
-
-助教将比较麻烦的`load_segment` `prepare_heap` `prepare_stack` 剥离出来并实现了, 你只需完成主线任务
-
-这个函数的复杂性大概是OS内核中最高的, 横跨进程、内存、文件系统三大核心模块, 需要你非常细心并充分理解每个步骤
-
-## 第5步: 增加系统调用 (syscall)
-
-为了便于在用户态进行系统测试, 你需要先实现一些新的系统调用, 主要是文件系统相关的 (9-22)
-
-这是最新的系统调用表, 你需要参考它修改**syscall.c**与**sysfunc.c**中的缺漏
-
-更多输入输出细节请参考**sysfunc.c**中各个系统调用函数的注释
-
-```c
-#define SYS_brk 1               // 调整堆边界
-#define SYS_mmap 2              // 创建内存映射
-#define SYS_munmap 3            // 解除内存映射
-#define SYS_fork 4              // 进程复制
-#define SYS_wait 5              // 等待子进程退出
-#define SYS_exit 6              // 进程退出
-#define SYS_sleep 7             // 进程睡眠一段时间
-#define SYS_getpid 8            // 获取当前进程的ID
-#define SYS_exec 9              // 执行ELF文件
-#define SYS_open 10             // 打开文件
-#define SYS_close 11            // 关闭文件
-#define SYS_read 12             // 读取文件
-#define SYS_write 13            // 写入文件
-#define SYS_lseek 14            // 移动读写指针
-#define SYS_dup 15              // 复制文件权限
-#define SYS_fstat 16            // 获取文件状态信息
-#define SYS_get_dentries 17     // 获取目录下所有有效目录项
-#define SYS_mkdir 18            // 创建目录文件
-#define SYS_chdir 19            // 切换工作目录
-#define SYS_print_cwd 20        // 打印工作目录的绝对路径
-#define SYS_link 21             // 建立硬链接
-#define SYS_unlink 22           // 解除硬链接
-```
-
-## 测试用例
-
-实现`proc_exec`对系统调用的测试有很大帮助, 现在的测试流程是:
-
-**initcode.c -> (fork + exec + wait) -> test_1 or test_2 or test_3 ...**
-
-你只需要修改`initcode.c`中的**path**和**argv**参数即可启动不同的测试点
-
-助教准备了4个测试用例 (在`src/user`目录中), 请你依次执行, 理想结果见`picture/`目录
-
-**尾声**
-
-**历经9次实验, 我们终于完成了这个小型操作系统内核的全部工作, 祝贺!**
-
-它的代码量大约5500行, 由内核态程序、用户态程序、文件系统初始化程序、链接脚本四部分构成
-
-**我们先来回顾一下9次实验的内容:**
-
-- lab 1: 机器启动  
-- lab 2: 内存管理初步  
-- lab 3: 中断异常初步  
-- lab 4: 第一个用户态进程的诞生
-- lab 5: 系统调用流程建立+用户态虚拟内存管理
-- lab 6: 从单进程走向多进程--进程调度与生命周期
-- lab 7: 文件系统 之 磁盘管理  
-- lab 8: 文件系统 之 数据组织与层次结构  
-- lab 9: 文件系统 之 文件管理与全系统整合  
-
-**这9次实验大致可以划分成3个阶段:**
-
-- lab 1-3: 构建OS内核的基础设施, 例如串口、自旋锁、物理页、页表、中断异常等  
-- lab 4-6: 按照“从一到多,从弱到强”的顺序构建进程模块, 并与内存模块、陷阱模块深度绑定  
-- lab 7-9: 引入持久化存储概念, 自底向上构建文件系统模块, 并与进程模块深度绑定  
-
-助教希望能帮你梳理系统构建的底层逻辑, 并带领你一步步来做; 但是受限于能力和精力, 难免有所缺漏, 请多包涵
-
-经过这样的动手过程, 相信你对小型OS内核已经建立起了基本概念; 请记住, **这是起点而非终点**
-
-**如果你想进一步完善和改进这个基础版本的OS内核, 我们提供了一些方向:**
-
-- **内存管理**: (1) 实现更完善的缺页异常和写时拷贝机制; (2) 实现伙伴系统分配器
-- **进程管理**: (1) 实现多级反馈调度算法来替换现有的轮询式调度; (2) 实现内核态线程机制
-- **文件系统**: (1) 修改现有的mmap机制, 实现文件映射能力; (2) 实现基于FAT的文件系统, 构建VFS层
-- **用户程序**: (1) 实现一个好用的shell程序; (2) 补充更多实用程序(如ls、cd、cat等)
-- **硬件适配**: (1) 从仿真的QEMU移植到物理的开发板; (2) 支持更多体系结构（如x86、ARM、LoongArch等）
-
-**这个你亲手完成的小型OS内核, 将成为操作系统研究道路上的第一块砖, 支撑你走得更远!**
+## 总结与思考
