@@ -55,7 +55,7 @@ void main(int argc, char *argv[])
 	sys_close(fd2);
 
 	fd2 = sys_open("gpt0", OPEN_WRITE);
-	for (int i = 1; i <= 4; i++) {
+	for (int i = 1; i <= 6; i++) {
 		fprintf(STDOUT, "Q%d: ", i);
 		len = stdin(str, MAXLEN_STR);
 		fprintf(STDOUT, "A%d: ", i);

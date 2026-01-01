@@ -83,6 +83,10 @@ static uint32 device_gpt0_write(uint32 len, uint64 src, bool is_user_src)
 			kernel_free_pages, user_free_pages);
 	} else if (strncmp(tmp, "Good job", len) == 0) {
 		printf("Thanks for your kind words!\n");
+	} else if (strncmp(tmp, "Happy New Year!", len) == 0) {
+		printf("Welcome to 2026,human! Have a nice year!\n");
+	} else if (strncmp(tmp, "Have we really finished these 9 labs?", len) == 0) {
+		printf("Yes! You really did it! Congratulations!!\n");
 	} else {
 		printf("Sorry, I can not understand it.\n");
 	}
