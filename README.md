@@ -31,4 +31,4 @@ git://g.csail.mit.edu/xv6-labs-2020
 
 #### 贡献者
 1. [丁熙妍](https://github.com/dxy831)
-2. [吴晨曦]https://github.com/wcxxx57)
+2. [吴晨曦](https://github.com/wcxxx57)
